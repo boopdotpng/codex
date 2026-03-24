@@ -1561,7 +1561,6 @@ impl Session {
         .await;
         handlers::shutdown(self, self.next_internal_sub_id()).await;
     }
-
     async fn ensure_agent_task_registered(&self) -> anyhow::Result<Option<RegisteredAgentTask>> {
         {
             let state = self.state.lock().await;
