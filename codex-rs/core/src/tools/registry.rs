@@ -124,12 +124,28 @@ impl AnyToolResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreToolUsePayload {
+    /// Hook-facing tool name used for matcher selection and hook stdin.
+    ///
+    /// This is intentionally handler supplied because compatibility names do
+    /// not always match registry names. Shell-style handlers use `Bash` for
+    /// historical matcher compatibility, while first-class patch edits use
+    /// `apply_patch`.
+    pub(crate) tool_name: String,
+    /// Command-shaped input exposed at `tool_input.command`.
     pub(crate) command: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PostToolUsePayload {
+    /// Hook-facing tool name used for matcher selection and hook stdin.
+    ///
+    /// Keep this aligned with the corresponding pre-use payload so external
+    /// hook consumers can pair events by `tool_use_id` without also needing to
+    /// normalize tool names.
+    pub(crate) tool_name: String,
+    /// Command-shaped input exposed at `tool_input.command`.
     pub(crate) command: String,
+    /// Tool result exposed at `tool_response`.
     pub(crate) tool_response: Value,
 }
 
@@ -321,6 +337,7 @@ impl ToolRegistry {
                 &invocation.session,
                 &invocation.turn,
                 invocation.call_id.clone(),
+                pre_tool_use_payload.tool_name.clone(),
                 pre_tool_use_payload.command.clone(),
             )
             .await
@@ -391,6 +408,7 @@ impl ToolRegistry {
                     &invocation.session,
                     &invocation.turn,
                     invocation.call_id.clone(),
+                    post_tool_use_payload.tool_name,
                     post_tool_use_payload.command,
                     post_tool_use_payload.tool_response,
                 )

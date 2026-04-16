@@ -21,6 +21,7 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
+use core_test_support::responses::ev_apply_patch_function_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -1812,7 +1813,84 @@ async fn pre_tool_use_blocks_exec_command_before_execution() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pre_tool_use_does_not_fire_for_non_shell_tools() -> Result<()> {
+async fn pre_tool_use_blocks_apply_patch_before_execution() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "pretooluse-apply-patch";
+    let file_name = "pre_tool_use_apply_patch.txt";
+    let patch = format!(
+        r#"*** Begin Patch
+*** Add File: {file_name}
++blocked
+*** End Patch"#
+    );
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_apply_patch_function_call(call_id, &patch),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "apply_patch blocked"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_pre_tool_use_hook(
+                home,
+                Some("^apply_patch$"),
+                "json_deny",
+                "blocked apply_patch",
+            ) {
+                panic!("failed to write pre tool use hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config.include_apply_patch_tool = true;
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("apply the blocked patch").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].function_call_output(call_id);
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("apply_patch output string");
+    assert!(
+        output.contains("Command blocked by PreToolUse hook: blocked apply_patch"),
+        "blocked apply_patch output should surface the hook reason",
+    );
+    assert!(
+        !test.workspace_path(file_name).exists(),
+        "blocked apply_patch should not create the file"
+    );
+
+    let hook_inputs = read_pre_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["tool_name"], "apply_patch");
+    assert_eq!(hook_inputs[0]["tool_use_id"], call_id);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], patch);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pre_tool_use_does_not_fire_for_plan_tool() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -1877,7 +1955,7 @@ async fn pre_tool_use_does_not_fire_for_non_shell_tools() -> Result<()> {
     let hook_log_path = test.codex_home_path().join("pre_tool_use_hook_log.jsonl");
     assert!(
         !hook_log_path.exists(),
-        "non-shell tools should not trigger pre tool use hooks",
+        "plan tool should not trigger pre tool use hooks",
     );
 
     Ok(())
@@ -2267,7 +2345,92 @@ async fn post_tool_use_exit_two_replaces_one_shot_exec_command_output_with_feedb
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn post_tool_use_does_not_fire_for_non_shell_tools() -> Result<()> {
+async fn post_tool_use_records_additional_context_for_apply_patch() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "posttooluse-apply-patch";
+    let file_name = "post_tool_use_apply_patch.txt";
+    let patch = format!(
+        r#"*** Begin Patch
+*** Add File: {file_name}
++patched
+*** End Patch"#
+    );
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_apply_patch_function_call(call_id, &patch),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "apply_patch post hook context observed"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let post_context = "Remember the apply_patch post-tool note.";
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) =
+                write_post_tool_use_hook(home, Some("^apply_patch$"), "context", post_context)
+            {
+                panic!("failed to write post tool use hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config.include_apply_patch_tool = true;
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("apply the patch with post hook").await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]
+            .message_input_texts("developer")
+            .contains(&post_context.to_string()),
+        "follow-up request should include apply_patch post tool use context",
+    );
+    assert!(
+        test.workspace_path(file_name).exists(),
+        "apply_patch should create the file"
+    );
+
+    let hook_inputs = read_post_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["tool_name"], "apply_patch");
+    assert_eq!(hook_inputs[0]["tool_use_id"], call_id);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], patch);
+    let tool_response = hook_inputs[0]["tool_response"]
+        .as_str()
+        .context("apply_patch tool_response should be a string")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(tool_response)?,
+        serde_json::json!({
+            "output": "Success. Updated the following files:\nA post_tool_use_apply_patch.txt\n",
+            "metadata": {
+                "exit_code": 0,
+                "duration_seconds": 0.0,
+            },
+        })
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_tool_use_does_not_fire_for_plan_tool() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -2335,7 +2498,7 @@ async fn post_tool_use_does_not_fire_for_non_shell_tools() -> Result<()> {
     let hook_log_path = test.codex_home_path().join("post_tool_use_hook_log.jsonl");
     assert!(
         !hook_log_path.exists(),
-        "non-shell tools should not trigger post tool use hooks",
+        "plan tool should not trigger post tool use hooks",
     );
 
     Ok(())

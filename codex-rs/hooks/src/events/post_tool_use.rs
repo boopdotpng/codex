@@ -86,21 +86,7 @@ pub(crate) async fn run(
         };
     }
 
-    let input_json = match serde_json::to_string(&PostToolUseCommandInput {
-        session_id: request.session_id.to_string(),
-        turn_id: request.turn_id.clone(),
-        transcript_path: crate::schema::NullableString::from_path(request.transcript_path.clone()),
-        cwd: request.cwd.display().to_string(),
-        hook_event_name: "PostToolUse".to_string(),
-        model: request.model.clone(),
-        permission_mode: request.permission_mode.clone(),
-        tool_name: "Bash".to_string(),
-        tool_input: PostToolUseToolInput {
-            command: request.command.clone(),
-        },
-        tool_response: request.tool_response.clone(),
-        tool_use_id: request.tool_use_id.clone(),
-    }) {
+    let input_json = match command_input_json(&request) {
         Ok(input_json) => input_json,
         Err(error) => {
             let hook_events = common::serialization_failure_hook_events_for_tool_use(
@@ -151,6 +137,29 @@ pub(crate) async fn run(
         additional_contexts,
         feedback_message,
     }
+}
+
+/// Serializes command stdin for a selected `PostToolUse` hook.
+///
+/// The request has already been matched by `tool_name`, so the serialized
+/// payload preserves that same name for hook logs and for consumers that pair
+/// pre/post events across processes.
+fn command_input_json(request: &PostToolUseRequest) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&PostToolUseCommandInput {
+        session_id: request.session_id.to_string(),
+        turn_id: request.turn_id.clone(),
+        transcript_path: crate::schema::NullableString::from_path(request.transcript_path.clone()),
+        cwd: request.cwd.display().to_string(),
+        hook_event_name: "PostToolUse".to_string(),
+        model: request.model.clone(),
+        permission_mode: request.permission_mode.clone(),
+        tool_name: request.tool_name.clone(),
+        tool_input: PostToolUseToolInput {
+            command: request.command.clone(),
+        },
+        tool_response: request.tool_response.clone(),
+        tool_use_id: request.tool_use_id.clone(),
+    })
 }
 
 fn parse_completed(
@@ -314,11 +323,24 @@ mod tests {
     use serde_json::json;
 
     use super::PostToolUseHandlerData;
+    use super::command_input_json;
     use super::parse_completed;
     use super::preview;
     use crate::engine::ConfiguredHandler;
     use crate::engine::command_runner::CommandRunResult;
     use crate::events::common;
+
+    #[test]
+    fn command_input_uses_request_tool_name() {
+        let mut request = request_for_tool_use("call-apply-patch");
+        request.tool_name = "apply_patch".to_string();
+
+        let input_json = command_input_json(&request).expect("serialize command input");
+        let input: serde_json::Value =
+            serde_json::from_str(&input_json).expect("parse command input");
+
+        assert_eq!(input["tool_name"], "apply_patch");
+    }
 
     #[test]
     fn block_decision_stops_normal_processing() {

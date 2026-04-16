@@ -231,6 +231,7 @@ async fn shell_pre_tool_use_payload_uses_joined_command() {
             payload,
         }),
         Some(crate::tools::registry::PreToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: "bash -lc 'printf hi'".to_string(),
         })
     );
@@ -256,6 +257,7 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
             payload,
         }),
         Some(crate::tools::registry::PreToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: "printf shell command".to_string(),
         })
     );
@@ -278,6 +280,7 @@ fn build_post_tool_use_payload_uses_tool_output_wire_value() {
     assert_eq!(
         handler.post_tool_use_payload("call-42", &payload, &output),
         Some(crate::tools::registry::PostToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: "printf shell command".to_string(),
             tool_response: json!("shell output"),
         })

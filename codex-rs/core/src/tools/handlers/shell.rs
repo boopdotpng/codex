@@ -205,7 +205,10 @@ impl ToolHandler for ShellHandler {
     }
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        shell_payload_command(&invocation.payload).map(|command| PreToolUsePayload { command })
+        shell_payload_command(&invocation.payload).map(|command| PreToolUsePayload {
+            tool_name: "Bash".to_string(),
+            command,
+        })
     }
 
     fn post_tool_use_payload(
@@ -216,6 +219,7 @@ impl ToolHandler for ShellHandler {
     ) -> Option<PostToolUsePayload> {
         let tool_response = result.post_tool_use_response(call_id, payload)?;
         Some(PostToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: shell_payload_command(payload)?,
             tool_response,
         })
@@ -313,8 +317,10 @@ impl ToolHandler for ShellCommandHandler {
     }
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        shell_command_payload_command(&invocation.payload)
-            .map(|command| PreToolUsePayload { command })
+        shell_command_payload_command(&invocation.payload).map(|command| PreToolUsePayload {
+            tool_name: "Bash".to_string(),
+            command,
+        })
     }
 
     fn post_tool_use_payload(
@@ -325,6 +331,7 @@ impl ToolHandler for ShellCommandHandler {
     ) -> Option<PostToolUsePayload> {
         let tool_response = result.post_tool_use_response(call_id, payload)?;
         Some(PostToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: shell_command_payload_command(payload)?,
             tool_response,
         })

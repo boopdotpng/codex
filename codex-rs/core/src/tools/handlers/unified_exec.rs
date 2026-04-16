@@ -136,7 +136,10 @@ impl ToolHandler for UnifiedExecHandler {
 
         parse_arguments::<ExecCommandArgs>(arguments)
             .ok()
-            .map(|args| PreToolUsePayload { command: args.cmd })
+            .map(|args| PreToolUsePayload {
+                tool_name: "Bash".to_string(),
+                command: args.cmd,
+            })
     }
 
     fn post_tool_use_payload(
@@ -156,6 +159,7 @@ impl ToolHandler for UnifiedExecHandler {
 
         let tool_response = result.post_tool_use_response(call_id, payload)?;
         Some(PostToolUsePayload {
+            tool_name: "Bash".to_string(),
             command: args.cmd,
             tool_response,
         })

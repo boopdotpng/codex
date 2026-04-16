@@ -77,20 +77,7 @@ pub(crate) async fn run(
         };
     }
 
-    let input_json = match serde_json::to_string(&PreToolUseCommandInput {
-        session_id: request.session_id.to_string(),
-        turn_id: request.turn_id.clone(),
-        transcript_path: crate::schema::NullableString::from_path(request.transcript_path.clone()),
-        cwd: request.cwd.display().to_string(),
-        hook_event_name: "PreToolUse".to_string(),
-        model: request.model.clone(),
-        permission_mode: request.permission_mode.clone(),
-        tool_name: "Bash".to_string(),
-        tool_input: crate::schema::PreToolUseToolInput {
-            command: request.command.clone(),
-        },
-        tool_use_id: request.tool_use_id.clone(),
-    }) {
+    let input_json = match command_input_json(&request) {
         Ok(input_json) => input_json,
         Err(error) => {
             let hook_events = common::serialization_failure_hook_events_for_tool_use(
@@ -128,6 +115,28 @@ pub(crate) async fn run(
         should_block,
         block_reason,
     }
+}
+
+/// Serializes command stdin for a selected `PreToolUse` hook.
+///
+/// Handler selection and command input must use the same `tool_name`; otherwise
+/// a hook may match one name but receive a different name in its JSON payload,
+/// which makes audit logs and downstream policy decisions disagree.
+fn command_input_json(request: &PreToolUseRequest) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&PreToolUseCommandInput {
+        session_id: request.session_id.to_string(),
+        turn_id: request.turn_id.clone(),
+        transcript_path: crate::schema::NullableString::from_path(request.transcript_path.clone()),
+        cwd: request.cwd.display().to_string(),
+        hook_event_name: "PreToolUse".to_string(),
+        model: request.model.clone(),
+        permission_mode: request.permission_mode.clone(),
+        tool_name: request.tool_name.clone(),
+        tool_input: crate::schema::PreToolUseToolInput {
+            command: request.command.clone(),
+        },
+        tool_use_id: request.tool_use_id.clone(),
+    })
 }
 
 fn parse_completed(
@@ -250,11 +259,24 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::PreToolUseHandlerData;
+    use super::command_input_json;
     use super::parse_completed;
     use super::preview;
     use crate::engine::ConfiguredHandler;
     use crate::engine::command_runner::CommandRunResult;
     use crate::events::common;
+
+    #[test]
+    fn command_input_uses_request_tool_name() {
+        let mut request = request_for_tool_use("call-apply-patch");
+        request.tool_name = "apply_patch".to_string();
+
+        let input_json = command_input_json(&request).expect("serialize command input");
+        let input: serde_json::Value =
+            serde_json::from_str(&input_json).expect("parse command input");
+
+        assert_eq!(input["tool_name"], "apply_patch");
+    }
 
     #[test]
     fn permission_decision_deny_blocks_processing() {

@@ -127,10 +127,18 @@ pub(crate) async fn run_pending_session_start_hooks(
     .await
 }
 
+/// Runs matching `PreToolUse` hooks before a tool executes.
+///
+/// `tool_name` is the hook-facing matcher name that will also be serialized to
+/// hook stdin. Callers should pass the handler-provided compatibility name
+/// rather than deriving it from the internal registry key; otherwise existing
+/// matchers such as `^Bash$` can stop matching even though the underlying tool
+/// is still shell-like.
 pub(crate) async fn run_pre_tool_use_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     tool_use_id: String,
+    tool_name: String,
     command: String,
 ) -> Option<String> {
     let request = PreToolUseRequest {
@@ -140,7 +148,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
-        tool_name: "Bash".to_string(),
+        tool_name,
         tool_use_id,
         command,
     };
@@ -190,10 +198,17 @@ pub(crate) async fn run_permission_request_hooks(
     decision
 }
 
+/// Runs matching `PostToolUse` hooks after a tool has produced a successful output.
+///
+/// The `tool_name`, `command`, and `tool_response` values are already adapted
+/// by the tool handler into the stable hook contract. Passing raw internal tool
+/// data here would leak implementation details into user hook matchers and hook
+/// logs.
 pub(crate) async fn run_post_tool_use_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     tool_use_id: String,
+    tool_name: String,
     command: String,
     tool_response: Value,
 ) -> PostToolUseOutcome {
@@ -204,7 +219,7 @@ pub(crate) async fn run_post_tool_use_hooks(
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
-        tool_name: "Bash".to_string(),
+        tool_name,
         tool_use_id,
         command,
         tool_response,
