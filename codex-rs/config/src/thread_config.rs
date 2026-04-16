@@ -6,6 +6,10 @@ use async_trait::async_trait;
 use codex_model_provider_info::ModelProviderInfo;
 use thiserror::Error;
 
+mod remote;
+
+pub use remote::RemoteThreadConfigLoader;
+
 /// Context available to implementations when loading thread-scoped config.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ThreadConfigContext {
