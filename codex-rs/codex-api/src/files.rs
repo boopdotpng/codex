@@ -6,10 +6,12 @@ use crate::AuthProvider;
 use codex_client::build_reqwest_client_with_custom_ca;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_LENGTH;
+use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use tokio::fs::File;
 use tokio::time::Instant;
 use tokio_util::io::ReaderStream;
+use url::Url;
 
 pub const OPENAI_FILE_URI_PREFIX: &str = "sediment://";
 pub const OPENAI_FILE_UPLOAD_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
@@ -45,6 +47,13 @@ pub struct UploadedOpenAiFile {
     pub file_size_bytes: u64,
     pub mime_type: Option<String>,
     pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadedOpenAiFile {
+    pub bytes: Vec<u8>,
+    pub mime_type: Option<String>,
+    pub download_url: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -85,6 +94,12 @@ pub enum OpenAiFileError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to resolve OpenAI file URL `{url}`: {source}")]
+    InvalidUrl {
+        url: String,
+        #[source]
+        source: url::ParseError,
+    },
     #[error("OpenAI file upload for `{file_id}` is not ready yet")]
     UploadNotReady { file_id: String },
     #[error("OpenAI file upload for `{file_id}` failed: {message}")]
@@ -109,6 +124,54 @@ struct DownloadLinkResponse {
 
 pub fn openai_file_uri(file_id: &str) -> String {
     format!("{OPENAI_FILE_URI_PREFIX}{file_id}")
+}
+
+pub async fn download_openai_file(
+    base_url: &str,
+    auth: &impl AuthProvider,
+    download_url: &str,
+) -> Result<DownloadedOpenAiFile, OpenAiFileError> {
+    let resolved_url = resolve_openai_file_download_url(base_url, download_url)?;
+    let request_builder = if should_attach_auth_to_openai_file_url(&resolved_url, base_url) {
+        authorized_request(auth, reqwest::Method::GET, resolved_url.as_str())
+    } else {
+        build_reqwest_client()
+            .request(reqwest::Method::GET, resolved_url.as_str())
+            .timeout(OPENAI_FILE_REQUEST_TIMEOUT)
+    };
+    let response = request_builder
+        .send()
+        .await
+        .map_err(|source| OpenAiFileError::Request {
+            url: resolved_url.to_string(),
+            source,
+        })?;
+    let status = response.status();
+    let mime_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(OpenAiFileError::UnexpectedStatus {
+            url: resolved_url.to_string(),
+            status,
+            body,
+        });
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|source| OpenAiFileError::Request {
+            url: resolved_url.to_string(),
+            source,
+        })?;
+    Ok(DownloadedOpenAiFile {
+        bytes: bytes.to_vec(),
+        mime_type,
+        download_url: resolved_url.to_string(),
+    })
 }
 
 pub async fn upload_local_file(
@@ -291,6 +354,61 @@ fn authorized_request(
         .headers(headers)
 }
 
+fn resolve_openai_file_download_url(
+    base_url: &str,
+    download_url: &str,
+) -> Result<Url, OpenAiFileError> {
+    match Url::parse(download_url) {
+        Ok(url) => Ok(url),
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            let normalized_base_url = if base_url.ends_with('/') {
+                base_url.to_string()
+            } else {
+                format!("{base_url}/")
+            };
+            let base =
+                Url::parse(&normalized_base_url).map_err(|source| OpenAiFileError::InvalidUrl {
+                    url: normalized_base_url.clone(),
+                    source,
+                })?;
+            base.join(download_url)
+                .map_err(|source| OpenAiFileError::InvalidUrl {
+                    url: download_url.to_string(),
+                    source,
+                })
+        }
+        Err(source) => Err(OpenAiFileError::InvalidUrl {
+            url: download_url.to_string(),
+            source,
+        }),
+    }
+}
+
+fn should_attach_auth_to_openai_file_url(download_url: &Url, base_url: &str) -> bool {
+    let host = download_url
+        .host_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if host == "localhost"
+        || host == "127.0.0.1"
+        || host == "::1"
+        || host == "openai.com"
+        || host.ends_with(".openai.com")
+        || host == "chatgpt.com"
+        || (host.ends_with(".chatgpt.com") && !host.starts_with("ab."))
+    {
+        return true;
+    }
+
+    let Ok(base_url) = Url::parse(base_url) else {
+        return false;
+    };
+    match (download_url.host_str(), base_url.host_str()) {
+        (Some(download_host), Some(base_host)) => download_host.eq_ignore_ascii_case(base_host),
+        _ => false,
+    }
+}
+
 fn build_reqwest_client() -> reqwest::Client {
     build_reqwest_client_with_custom_ca(reqwest::Client::builder()).unwrap_or_else(|error| {
         tracing::warn!(error = %error, "failed to build OpenAI file upload client");
@@ -322,6 +440,37 @@ mod tests {
 
     fn base_url_for(server: &MockServer) -> String {
         format!("{}/backend-api", server.uri())
+    }
+
+    #[tokio::test]
+    async fn download_openai_file_resolves_relative_url_and_attaches_auth() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/files/download/file_123"))
+            .and(header("authorization", "Bearer token"))
+            .and(header("chatgpt-account-id", "account_id"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/plain")
+                    .set_body_bytes(b"hello".to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        let downloaded = download_openai_file(
+            &format!("{}/backend-api/codex", server.uri()),
+            &chatgpt_auth(),
+            "/files/download/file_123",
+        )
+        .await
+        .expect("download succeeds");
+
+        assert_eq!(downloaded.bytes, b"hello".to_vec());
+        assert_eq!(downloaded.mime_type, Some("text/plain".to_string()));
+        assert_eq!(
+            downloaded.download_url,
+            format!("{}/files/download/file_123", server.uri())
+        );
     }
 
     #[tokio::test]
