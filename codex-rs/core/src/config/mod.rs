@@ -21,7 +21,6 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
-use codex_config::NoopThreadConfigLoader;
 use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
@@ -713,7 +712,7 @@ impl ConfigBuilder {
             cloud_requirements,
             thread_config_loader
                 .as_deref()
-                .unwrap_or(&NoopThreadConfigLoader),
+                .unwrap_or(&codex_config::NoopThreadConfigLoader),
         )
         .await?;
         let merged_toml = config_layer_stack.effective_config();
@@ -877,7 +876,7 @@ pub async fn load_config_as_toml_with_cli_overrides(
         &cli_overrides,
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &NoopThreadConfigLoader,
+        &codex_config::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1049,7 +1048,7 @@ pub async fn load_global_mcp_servers(
         &cli_overrides,
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &NoopThreadConfigLoader,
+        &codex_config::NoopThreadConfigLoader,
     )
     .await?;
     let merged_toml = config_layer_stack.effective_config();
