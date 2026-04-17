@@ -131,6 +131,7 @@ struct KernelState {
 struct ExecContext {
     session: Arc<Session>,
     turn: Arc<TurnContext>,
+    cancellation_token: CancellationToken,
     tracker: SharedTurnDiffTracker,
 }
 
@@ -835,10 +836,23 @@ impl JsReplManager {
         }
     }
 
+    #[cfg(test)]
     pub async fn execute(
         &self,
         session: Arc<Session>,
         turn: Arc<TurnContext>,
+        tracker: SharedTurnDiffTracker,
+        args: JsReplArgs,
+    ) -> Result<JsExecResult, FunctionCallError> {
+        self.execute_with_cancellation(session, turn, CancellationToken::new(), tracker, args)
+            .await
+    }
+
+    pub async fn execute_with_cancellation(
+        &self,
+        session: Arc<Session>,
+        turn: Arc<TurnContext>,
+        cancellation_token: CancellationToken,
         tracker: SharedTurnDiffTracker,
         args: JsReplArgs,
     ) -> Result<JsExecResult, FunctionCallError> {
@@ -891,6 +905,7 @@ impl JsReplManager {
                 ExecContext {
                     session: Arc::clone(&session),
                     turn: Arc::clone(&turn),
+                    cancellation_token,
                     tracker,
                 },
             );
@@ -1639,12 +1654,14 @@ impl JsReplManager {
 
         let session = Arc::clone(&exec.session);
         let turn = Arc::clone(&exec.turn);
+        let cancellation_token = exec.cancellation_token.clone();
         let tracker = Arc::clone(&exec.tracker);
 
         match router
-            .dispatch_tool_call_with_code_mode_result(
+            .dispatch_tool_call_with_code_mode_result_with_cancellation(
                 session,
                 turn,
+                cancellation_token,
                 tracker,
                 call,
                 crate::tools::router::ToolCallSource::JsRepl,

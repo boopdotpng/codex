@@ -4944,6 +4944,14 @@ pub struct GuardianMcpToolCallReviewAction {
     pub tool_title: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct GuardianRequestPermissionsReviewAction {
+    pub reason: Option<String>,
+    pub permissions: RequestPermissionProfile,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type", rename_all = "camelCase")]
@@ -4986,6 +4994,12 @@ pub enum GuardianApprovalReviewAction {
         connector_id: Option<String>,
         connector_name: Option<String>,
         tool_title: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    RequestPermissions {
+        reason: Option<String>,
+        permissions: RequestPermissionProfile,
     },
 }
 
@@ -5038,6 +5052,13 @@ impl From<CoreGuardianAssessmentAction> for GuardianApprovalReviewAction {
                 connector_id,
                 connector_name,
                 tool_title,
+            },
+            CoreGuardianAssessmentAction::RequestPermissions {
+                reason,
+                permissions,
+            } => Self::RequestPermissions {
+                reason,
+                permissions: permissions.into(),
             },
         }
     }
@@ -5092,6 +5113,13 @@ impl From<GuardianApprovalReviewAction> for CoreGuardianAssessmentAction {
                 connector_id,
                 connector_name,
                 tool_title,
+            },
+            GuardianApprovalReviewAction::RequestPermissions {
+                reason,
+                permissions,
+            } => Self::RequestPermissions {
+                reason,
+                permissions: permissions.into(),
             },
         }
     }
