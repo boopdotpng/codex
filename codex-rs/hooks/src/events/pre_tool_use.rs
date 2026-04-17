@@ -8,6 +8,7 @@ use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use serde_json::Value;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -27,7 +28,7 @@ pub struct PreToolUseRequest {
     pub permission_mode: String,
     pub tool_name: String,
     pub tool_use_id: String,
-    pub command: String,
+    pub tool_input: Value,
 }
 
 #[derive(Debug)]
@@ -85,10 +86,8 @@ pub(crate) async fn run(
         hook_event_name: "PreToolUse".to_string(),
         model: request.model.clone(),
         permission_mode: request.permission_mode.clone(),
-        tool_name: "Bash".to_string(),
-        tool_input: crate::schema::PreToolUseToolInput {
-            command: request.command.clone(),
-        },
+        tool_name: request.tool_name.clone(),
+        tool_input: request.tool_input.clone(),
         tool_use_id: request.tool_use_id.clone(),
     }) {
         Ok(input_json) => input_json,
@@ -541,7 +540,7 @@ mod tests {
             permission_mode: "default".to_string(),
             tool_name: "Bash".to_string(),
             tool_use_id: tool_use_id.to_string(),
-            command: "echo hello".to_string(),
+            tool_input: serde_json::json!({ "command": "echo hello" }),
         }
     }
 }

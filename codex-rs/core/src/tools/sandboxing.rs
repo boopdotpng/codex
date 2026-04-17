@@ -134,8 +134,7 @@ pub(crate) struct ApprovalCtx<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PermissionRequestPayload {
     pub tool_name: String,
-    pub command: String,
-    pub description: Option<String>,
+    pub tool_input: serde_json::Value,
 }
 
 // Specifies what tool orchestrator should do with a given tool call.

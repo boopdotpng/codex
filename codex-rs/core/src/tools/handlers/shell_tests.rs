@@ -231,7 +231,9 @@ async fn shell_pre_tool_use_payload_uses_joined_command() {
             payload,
         }),
         Some(crate::tools::registry::PreToolUsePayload {
-            command: "bash -lc 'printf hi'".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: json!({ "command": "bash -lc 'printf hi'" }),
+            display_command: Some("bash -lc 'printf hi'".to_string()),
         })
     );
 }
@@ -256,7 +258,9 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
             payload,
         }),
         Some(crate::tools::registry::PreToolUsePayload {
-            command: "printf shell command".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: json!({ "command": "printf shell command" }),
+            display_command: Some("printf shell command".to_string()),
         })
     );
 }
@@ -274,11 +278,13 @@ fn build_post_tool_use_payload_uses_tool_output_wire_value() {
     let handler = ShellCommandHandler {
         backend: super::ShellCommandBackend::Classic,
     };
+    let tool_name = codex_tools::ToolName::plain("shell_command");
 
     assert_eq!(
-        handler.post_tool_use_payload("call-42", &payload, &output),
+        handler.post_tool_use_payload("call-42", &tool_name, &payload, &output),
         Some(crate::tools::registry::PostToolUsePayload {
-            command: "printf shell command".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: json!({ "command": "printf shell command" }),
             tool_response: json!("shell output"),
         })
     );

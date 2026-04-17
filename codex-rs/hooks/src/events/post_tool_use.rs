@@ -17,7 +17,6 @@ use crate::engine::command_runner::CommandRunResult;
 use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PostToolUseCommandInput;
-use crate::schema::PostToolUseToolInput;
 
 #[derive(Debug, Clone)]
 pub struct PostToolUseRequest {
@@ -29,7 +28,7 @@ pub struct PostToolUseRequest {
     pub permission_mode: String,
     pub tool_name: String,
     pub tool_use_id: String,
-    pub command: String,
+    pub tool_input: Value,
     pub tool_response: Value,
 }
 
@@ -94,10 +93,8 @@ pub(crate) async fn run(
         hook_event_name: "PostToolUse".to_string(),
         model: request.model.clone(),
         permission_mode: request.permission_mode.clone(),
-        tool_name: "Bash".to_string(),
-        tool_input: PostToolUseToolInput {
-            command: request.command.clone(),
-        },
+        tool_name: request.tool_name.clone(),
+        tool_input: request.tool_input.clone(),
         tool_response: request.tool_response.clone(),
         tool_use_id: request.tool_use_id.clone(),
     }) {
@@ -552,7 +549,7 @@ mod tests {
             permission_mode: "default".to_string(),
             tool_name: "Bash".to_string(),
             tool_use_id: tool_use_id.to_string(),
-            command: "echo hello".to_string(),
+            tool_input: json!({ "command": "echo hello" }),
             tool_response: json!({"ok": true}),
         }
     }

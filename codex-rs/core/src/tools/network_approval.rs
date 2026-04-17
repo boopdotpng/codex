@@ -389,8 +389,10 @@ impl NetworkApprovalService {
             &guardian_approval_id,
             PermissionRequestPayload {
                 tool_name: "Bash".to_string(),
-                command,
-                description: Some(format!("network-access {target}")),
+                tool_input: serde_json::json!({
+                    "command": command,
+                    "description": format!("network-access {target}"),
+                }),
             },
         )
         .await
