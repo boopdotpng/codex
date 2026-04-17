@@ -4,7 +4,6 @@ use codex_api::CoreAuthProvider;
 use codex_api::download_openai_file;
 use codex_login::CodexAuth;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::LIBRARY_DOWNLOAD_FILE_TOOL_NAME;
 use codex_protocol::mcp::CallToolResult;
 use serde::Deserialize;
 use serde::Serialize;
@@ -12,6 +11,7 @@ use serde_json::Value as JsonValue;
 use tracing::warn;
 
 const LIBRARY_DOWNLOAD_ARTIFACTS_DIR: &str = ".tmp/library_downloads";
+const LIBRARY_DOWNLOAD_FILE_TOOL_NAME: &str = "library_download_file";
 
 #[derive(Debug, Deserialize, Serialize)]
 struct LibraryDownloadStructuredContent {

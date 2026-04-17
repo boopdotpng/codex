@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo as McpToolInfo;
 use codex_mcp::filter_non_codex_apps_mcp_tools_only;
-use codex_mcp::is_codex_apps_library_tool;
 use codex_tools::ToolsConfig;
 
 use crate::config::Config;
@@ -59,6 +58,13 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 }
 
+fn is_builtin_codex_apps_library_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "library_search_file" | "library_download_file" | "library_create_file"
+    )
+}
+
 fn filter_builtin_codex_apps_library_tools(
     mcp_tools: &HashMap<String, McpToolInfo>,
 ) -> HashMap<String, McpToolInfo> {
@@ -66,7 +72,7 @@ fn filter_builtin_codex_apps_library_tools(
         .iter()
         .filter(|(_, tool)| {
             tool.server_name == CODEX_APPS_MCP_SERVER_NAME
-                && is_codex_apps_library_tool(tool.tool.name.as_ref())
+                && is_builtin_codex_apps_library_tool(tool.tool.name.as_ref())
         })
         .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
