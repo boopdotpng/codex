@@ -65,6 +65,16 @@ fn approval_metadata(
     }
 }
 
+fn direct_exposed_builtin_codex_apps_meta() -> serde_json::Map<String, serde_json::Value> {
+    serde_json::json!({
+        "provider": "builtin",
+        "direct_expose": true,
+    })
+    .as_object()
+    .cloned()
+    .expect("_codex_apps metadata should be an object")
+}
+
 fn prompt_options(
     allow_session_remember: bool,
     allow_persistent_approval: bool,
@@ -510,6 +520,32 @@ fn codex_apps_connectors_support_persistent_approval() {
 }
 
 #[test]
+fn direct_exposed_builtin_codex_apps_tools_do_not_support_persistent_approval() {
+    let invocation = McpInvocation {
+        server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        tool: "library_search_file".to_string(),
+        arguments: None,
+    };
+    let mut metadata = approval_metadata(
+        /*connector_id*/ None,
+        /*connector_name*/ None,
+        /*connector_description*/ None,
+        /*tool_title*/ Some("Library Search File"),
+        /*tool_description*/ Some("Search library files."),
+    );
+    metadata.codex_apps_meta = Some(direct_exposed_builtin_codex_apps_meta());
+
+    assert_eq!(
+        session_mcp_tool_approval_key(&invocation, Some(&metadata), AppToolApproval::Auto),
+        None
+    );
+    assert_eq!(
+        persistent_mcp_tool_approval_key(&invocation, Some(&metadata), AppToolApproval::Auto),
+        None
+    );
+}
+
+#[test]
 fn sanitize_mcp_tool_result_for_model_rewrites_image_content() {
     let result = Ok(CallToolResult {
         content: vec![
@@ -630,7 +666,7 @@ async fn codex_apps_tool_call_request_meta_includes_turn_metadata_and_codex_apps
         ),
         Some(serde_json::json!({
             crate::X_CODEX_TURN_METADATA_HEADER: expected_turn_metadata,
-            MCP_TOOL_CODEX_APPS_META_KEY: {
+            crate::codex_apps_mcp_tools::CODEX_APPS_META_KEY: {
                 "resource_uri": "connector://calendar/tools/calendar_create_event",
                 "contains_mcp_source": true,
                 "connector_id": "calendar",

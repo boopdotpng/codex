@@ -411,6 +411,16 @@ fn make_mcp_tool(
     connector_id: Option<&str>,
     connector_name: Option<&str>,
 ) -> ToolInfo {
+    make_mcp_tool_with_meta(server_name, tool_name, connector_id, connector_name, None)
+}
+
+fn make_mcp_tool_with_meta(
+    server_name: &str,
+    tool_name: &str,
+    connector_id: Option<&str>,
+    connector_name: Option<&str>,
+    meta: Option<JsonObject>,
+) -> ToolInfo {
     let tool_namespace = if server_name == CODEX_APPS_MCP_SERVER_NAME {
         connector_name
             .map(crate::connectors::sanitize_name)
@@ -434,7 +444,7 @@ fn make_mcp_tool(
             annotations: None,
             execution: None,
             icons: None,
-            meta: None,
+            meta: meta.map(rmcp::model::Meta),
         },
         connector_id: connector_id.map(str::to_string),
         connector_name: connector_name.map(str::to_string),
@@ -1132,16 +1142,27 @@ async fn mcp_tool_exposure_directly_exposes_explicit_apps_without_deferred_overl
 }
 
 #[tokio::test]
-async fn mcp_tool_exposure_directly_exposes_builtin_codex_apps_library_tools_without_connectors() {
+async fn mcp_tool_exposure_directly_exposes_builtin_codex_apps_tools_marked_for_direct_exposure() {
     let config = test_config().await;
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mcp_tools = HashMap::from([(
         "mcp__codex_apps__library_search_file".to_string(),
-        make_mcp_tool(
+        make_mcp_tool_with_meta(
             CODEX_APPS_MCP_SERVER_NAME,
             "library_search_file",
             /*connector_id*/ None,
             /*connector_name*/ None,
+            Some(
+                serde_json::json!({
+                    "_codex_apps": {
+                        "provider": "builtin",
+                        "direct_expose": true,
+                    },
+                })
+                .as_object()
+                .cloned()
+                .expect("tool metadata object"),
+            ),
         ),
     )]);
 
@@ -1161,17 +1182,29 @@ async fn mcp_tool_exposure_directly_exposes_builtin_codex_apps_library_tools_wit
 }
 
 #[tokio::test]
-async fn mcp_tool_exposure_keeps_builtin_codex_apps_library_tools_direct_in_large_search_sets() {
+async fn mcp_tool_exposure_keeps_direct_exposed_builtin_codex_apps_tools_direct_in_large_search_sets()
+ {
     let config = test_config().await;
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mut mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD);
     mcp_tools.insert(
         "mcp__codex_apps__library_search_file".to_string(),
-        make_mcp_tool(
+        make_mcp_tool_with_meta(
             CODEX_APPS_MCP_SERVER_NAME,
             "library_search_file",
             /*connector_id*/ None,
             /*connector_name*/ None,
+            Some(
+                serde_json::json!({
+                    "_codex_apps": {
+                        "provider": "builtin",
+                        "direct_expose": true,
+                    },
+                })
+                .as_object()
+                .cloned()
+                .expect("tool metadata object"),
+            ),
         ),
     );
 

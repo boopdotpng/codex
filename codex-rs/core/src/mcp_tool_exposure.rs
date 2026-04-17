@@ -6,6 +6,7 @@ use codex_mcp::ToolInfo as McpToolInfo;
 use codex_mcp::filter_non_codex_apps_mcp_tools_only;
 use codex_tools::ToolsConfig;
 
+use crate::codex_apps_mcp_tools::is_direct_exposed_codex_apps_builtin_tool_info;
 use crate::config::Config;
 use crate::connectors;
 
@@ -24,7 +25,9 @@ pub(crate) fn build_mcp_tool_exposure(
     tools_config: &ToolsConfig,
 ) -> McpToolExposure {
     let mut deferred_tools = filter_non_codex_apps_mcp_tools_only(all_mcp_tools);
-    deferred_tools.extend(filter_builtin_codex_apps_library_tools(all_mcp_tools));
+    deferred_tools.extend(filter_direct_exposed_builtin_codex_apps_tools(
+        all_mcp_tools,
+    ));
     if let Some(connectors) = connectors {
         deferred_tools.extend(filter_codex_apps_mcp_tools(
             all_mcp_tools,
@@ -46,7 +49,7 @@ pub(crate) fn build_mcp_tool_exposure(
         deferred_tools.remove(direct_tool_name);
     }
 
-    let mut direct_tools = filter_builtin_codex_apps_library_tools(all_mcp_tools);
+    let mut direct_tools = filter_direct_exposed_builtin_codex_apps_tools(all_mcp_tools);
     direct_tools.extend(filter_codex_apps_mcp_tools(
         all_mcp_tools,
         explicitly_enabled_connectors,
@@ -58,22 +61,12 @@ pub(crate) fn build_mcp_tool_exposure(
     }
 }
 
-fn is_builtin_codex_apps_library_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "library_search_file" | "library_download_file" | "library_create_file"
-    )
-}
-
-fn filter_builtin_codex_apps_library_tools(
+fn filter_direct_exposed_builtin_codex_apps_tools(
     mcp_tools: &HashMap<String, McpToolInfo>,
 ) -> HashMap<String, McpToolInfo> {
     mcp_tools
         .iter()
-        .filter(|(_, tool)| {
-            tool.server_name == CODEX_APPS_MCP_SERVER_NAME
-                && is_builtin_codex_apps_library_tool(tool.tool.name.as_ref())
-        })
+        .filter(|(_, tool)| is_direct_exposed_codex_apps_builtin_tool_info(tool))
         .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
 }

@@ -15,6 +15,8 @@ use crate::arc_monitor::monitor_action;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex_apps_library_download::maybe_materialize_codex_apps_library_download_result;
+use crate::codex_apps_mcp_tools::CODEX_APPS_META_KEY;
+use crate::codex_apps_mcp_tools::is_direct_exposed_codex_apps_builtin;
 use crate::config::Config;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
@@ -658,7 +660,6 @@ pub(crate) struct McpToolApprovalMetadata {
     openai_file_upload_options: Option<OpenAiFileUploadOptions>,
 }
 
-const MCP_TOOL_CODEX_APPS_META_KEY: &str = "_codex_apps";
 const MCP_TOOL_OPENAI_FILE_UPLOAD_CONFIG_KEY: &str = "openai/fileUploadConfig";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -724,7 +725,7 @@ fn build_mcp_tool_call_request_meta(
             metadata.and_then(|metadata| metadata.codex_apps_meta.clone())
     {
         request_meta.insert(
-            MCP_TOOL_CODEX_APPS_META_KEY.to_string(),
+            CODEX_APPS_META_KEY.to_string(),
             serde_json::Value::Object(codex_apps_meta),
         );
     }
@@ -1013,7 +1014,11 @@ fn session_mcp_tool_approval_key(
     }
 
     let connector_id = metadata.and_then(|metadata| metadata.connector_id.clone());
-    if invocation.server == CODEX_APPS_MCP_SERVER_NAME && connector_id.is_none() {
+    if is_direct_exposed_codex_apps_builtin(
+        invocation.server.as_str(),
+        connector_id.as_deref(),
+        metadata.and_then(|metadata| metadata.codex_apps_meta.as_ref()),
+    ) {
         return None;
     }
 
@@ -1140,7 +1145,7 @@ pub(crate) async fn lookup_mcp_tool_metadata(
             .tool
             .meta
             .as_ref()
-            .and_then(|meta| meta.get(MCP_TOOL_CODEX_APPS_META_KEY))
+            .and_then(|meta| meta.get(CODEX_APPS_META_KEY))
             .and_then(serde_json::Value::as_object)
             .cloned(),
         openai_file_input_params: Some(declared_openai_file_input_param_names(
