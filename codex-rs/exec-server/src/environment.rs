@@ -13,18 +13,19 @@ use crate::remote_process::RemoteProcess;
 
 pub const CODEX_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_EXEC_SERVER_URL";
 
-/// Owns the execution/filesystem environments available to a session.
+/// Owns the execution/filesystem environments available to the Codex runtime.
 ///
-/// `EnvironmentManager` is the session-scoped registry for concrete
-/// environments. It creates a local environment under [`LOCAL_ENVIRONMENT_ID`]
-/// unless environment access is disabled. When `CODEX_EXEC_SERVER_URL` is set to
-/// a websocket URL, it also creates a remote environment under
-/// [`REMOTE_ENVIRONMENT_ID`] and makes that the default environment. Otherwise
-/// the local environment is the default.
+/// `EnvironmentManager` is a shared registry for concrete environments. It
+/// always creates a local environment under [`LOCAL_ENVIRONMENT_ID`]. When
+/// `CODEX_EXEC_SERVER_URL` is set to a websocket URL, it also creates a remote
+/// environment under [`REMOTE_ENVIRONMENT_ID`] and makes that the default
+/// environment. Otherwise the local environment is the default.
 ///
 /// Setting `CODEX_EXEC_SERVER_URL=none` disables environment access by leaving
-/// the default environment unset. Callers use `default_environment().is_some()`
-/// as the signal for model-facing shell/filesystem tool availability.
+/// the default environment unset while still keeping the local environment
+/// available for internal callers by id. Callers use
+/// `default_environment().is_some()` as the signal for model-facing
+/// shell/filesystem tool availability.
 ///
 /// Remote environments hold a lazy exec-server client handle. The websocket is
 /// not opened when the manager or environment is constructed; it connects on the
@@ -67,31 +68,23 @@ impl EnvironmentManager {
             local_runtime_paths,
         } = args;
         let (exec_server_url, environment_disabled) = normalize_exec_server_url(exec_server_url);
-        let mut environments = HashMap::new();
+        let mut environments = HashMap::from([(
+            LOCAL_ENVIRONMENT_ID.to_string(),
+            Arc::new(Environment::local_with_runtime_paths(
+                local_runtime_paths.clone(),
+            )),
+        )]);
         let default_environment = if environment_disabled {
             None
         } else {
-            environments.insert(
-                LOCAL_ENVIRONMENT_ID.to_string(),
-                Arc::new(
-                    Environment::create_with_runtime_paths(
-                        /*exec_server_url*/ None,
-                        local_runtime_paths.clone(),
-                    )
-                    .expect("valid local environment"),
-                ),
-            );
             match exec_server_url {
                 Some(exec_server_url) => {
                     environments.insert(
                         REMOTE_ENVIRONMENT_ID.to_string(),
-                        Arc::new(
-                            Environment::create_with_runtime_paths(
-                                Some(exec_server_url),
-                                local_runtime_paths,
-                            )
-                            .expect("valid remote environment"),
-                        ),
+                        Arc::new(Environment::remote_with_runtime_paths(
+                            exec_server_url,
+                            local_runtime_paths,
+                        )),
                     );
                     Some(REMOTE_ENVIRONMENT_ID.to_string())
                 }
@@ -168,25 +161,37 @@ impl Environment {
             ));
         }
 
-        let remote_exec_server_client = if let Some(exec_server_url) = exec_server_url.clone() {
-            Some(LazyRemoteExecServerClient::new(exec_server_url))
-        } else {
-            None
-        };
+        Ok(match exec_server_url {
+            Some(exec_server_url) => {
+                Self::remote_with_runtime_paths(exec_server_url, local_runtime_paths)
+            }
+            None => Self::local_with_runtime_paths(local_runtime_paths),
+        })
+    }
 
+    fn local_with_runtime_paths(local_runtime_paths: Option<ExecServerRuntimePaths>) -> Self {
+        Self {
+            exec_server_url: None,
+            remote_exec_server_client: None,
+            exec_backend: Arc::new(LocalProcess::default()),
+            local_runtime_paths,
+        }
+    }
+
+    fn remote_with_runtime_paths(
+        exec_server_url: String,
+        local_runtime_paths: Option<ExecServerRuntimePaths>,
+    ) -> Self {
+        let remote_exec_server_client = LazyRemoteExecServerClient::new(exec_server_url.clone());
         let exec_backend: Arc<dyn ExecBackend> =
-            if let Some(client) = remote_exec_server_client.clone() {
-                Arc::new(RemoteProcess::new(client))
-            } else {
-                Arc::new(LocalProcess::default())
-            };
+            Arc::new(RemoteProcess::new(remote_exec_server_client.clone()));
 
-        Ok(Self {
-            exec_server_url,
-            remote_exec_server_client,
+        Self {
+            exec_server_url: Some(exec_server_url),
+            remote_exec_server_client: Some(remote_exec_server_client),
             exec_backend,
             local_runtime_paths,
-        })
+        }
     }
 
     pub fn is_remote(&self) -> bool {
@@ -264,15 +269,20 @@ mod tests {
         assert!(manager.get_environment(REMOTE_ENVIRONMENT_ID).is_none());
     }
 
-    #[test]
-    fn environment_manager_treats_none_value_as_disabled() {
+    #[tokio::test]
+    async fn environment_manager_treats_none_value_as_disabled() {
         let manager = EnvironmentManager::new(EnvironmentManagerArgs {
             exec_server_url: Some("none".to_string()),
             local_runtime_paths: None,
         });
 
         assert!(manager.default_environment().is_none());
-        assert!(manager.get_environment(LOCAL_ENVIRONMENT_ID).is_none());
+        assert!(
+            !manager
+                .get_environment(LOCAL_ENVIRONMENT_ID)
+                .expect("local environment")
+                .is_remote()
+        );
         assert!(manager.get_environment(REMOTE_ENVIRONMENT_ID).is_none());
     }
 
@@ -286,19 +296,27 @@ mod tests {
         let environment = manager.default_environment().expect("default environment");
         assert!(environment.is_remote());
         assert_eq!(environment.exec_server_url(), Some("ws://127.0.0.1:8765"));
+        assert!(Arc::ptr_eq(
+            &environment,
+            &manager
+                .get_environment(REMOTE_ENVIRONMENT_ID)
+                .expect("remote environment")
+        ));
         assert!(
             !manager
                 .get_environment(LOCAL_ENVIRONMENT_ID)
                 .expect("local environment")
                 .is_remote()
         );
-        assert_eq!(
-            manager
-                .get_environment(REMOTE_ENVIRONMENT_ID)
-                .expect("remote environment")
-                .exec_server_url(),
-            Some("ws://127.0.0.1:8765")
-        );
+    }
+
+    #[test]
+    fn create_remote_environment_does_not_connect() {
+        let environment =
+            Environment::create(Some("ws://127.0.0.1:9".to_string())).expect("create environment");
+
+        assert!(environment.is_remote());
+        assert!(environment.remote_exec_server_client.is_some());
     }
 
     #[tokio::test]
@@ -345,14 +363,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn environment_manager_omits_environment_lookup_when_disabled() {
+    async fn environment_manager_keeps_local_lookup_when_default_disabled() {
         let manager = EnvironmentManager::new(EnvironmentManagerArgs {
             exec_server_url: Some("none".to_string()),
             local_runtime_paths: None,
         });
 
         assert!(manager.default_environment().is_none());
-        assert!(manager.get_environment(LOCAL_ENVIRONMENT_ID).is_none());
+        assert!(
+            !manager
+                .get_environment(LOCAL_ENVIRONMENT_ID)
+                .expect("local environment")
+                .is_remote()
+        );
         assert!(manager.get_environment(REMOTE_ENVIRONMENT_ID).is_none());
     }
 
