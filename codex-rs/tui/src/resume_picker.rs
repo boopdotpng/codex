@@ -1188,7 +1188,7 @@ fn thread_list_params(
         source_kinds: (!include_non_interactive)
             .then_some(vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode]),
         archived: Some(false),
-        cwd: cwd_filter.map(|cwd| cwd.to_string_lossy().to_string()),
+        cwd: cwd_filter.map(|cwd| vec![cwd.to_string_lossy().to_string()]),
         search_term: None,
     }
 }
@@ -1920,7 +1920,7 @@ mod tests {
             params.source_kinds,
             Some(vec![ThreadSourceKind::Cli, ThreadSourceKind::VsCode])
         );
-        assert_eq!(params.cwd.as_deref(), Some("repo/on/server"));
+        assert_eq!(params.cwd, Some(vec![String::from("repo/on/server")]));
     }
 
     #[test]
