@@ -99,7 +99,7 @@ impl ApprovalRequest {
         }
     }
 
-    fn matches_resolved_request(&self, request: &ResolvedAppServerRequest) -> bool {
+    pub(crate) fn matches_resolved_request(&self, request: &ResolvedAppServerRequest) -> bool {
         match (self, request) {
             (
                 ApprovalRequest::Exec { id, .. },
