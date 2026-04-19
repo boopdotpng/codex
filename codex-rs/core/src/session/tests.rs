@@ -9485,7 +9485,7 @@ async fn create_goal_tool_rejects_existing_goal() {
 }
 
 #[tokio::test]
-async fn update_goal_tool_rejects_pausing_goal() {
+async fn update_goal_tool_marks_goal_paused() {
     let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
     let create_handler = CreateGoalHandler;
@@ -9511,7 +9511,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
         .await
         .expect("initial create_goal should succeed");
 
-    let response = update_handler
+    update_handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
@@ -9527,22 +9527,15 @@ async fn update_goal_tool_rejects_pausing_goal() {
                 .to_string(),
             },
         })
-        .await;
-
-    let Err(FunctionCallError::RespondToModel(output)) = response else {
-        panic!("expected update_goal to reject pausing a goal");
-    };
-    assert_eq!(
-        output,
-        "update_goal can only mark the existing goal complete; pause, resume, and budget-limited status changes are controlled by the user or system"
-    );
+        .await
+        .expect("update_goal should mark the goal paused");
 
     let goal = session
         .get_thread_goal()
         .await
         .expect("read thread goal")
         .expect("goal should still exist");
-    assert_eq!(goal.status, ThreadGoalStatus::Active);
+    assert_eq!(goal.status, ThreadGoalStatus::Paused);
 }
 
 #[tokio::test]

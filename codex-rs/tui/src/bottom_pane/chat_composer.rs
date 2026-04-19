@@ -201,6 +201,8 @@ use super::slash_commands::find_slash_command;
 use super::slash_commands::has_slash_command_prefix;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::bottom_pane::prompt_args::parse_slash_name;
+use crate::bottom_pane::prompt_args::parse_slash_name_from_any_line;
+use crate::bottom_pane::prompt_args::slash_command_rest_with_prefix;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::EditorKeymap;
 use crate::keymap::RuntimeKeymap;
@@ -2720,9 +2722,11 @@ impl ChatComposer {
 
         if slash_validation == SlashValidation::Immediate
             && self.slash_commands_enabled()
-            && let Some((name, _rest, _rest_offset)) = parse_slash_name(&text)
+            && let Some((name, _rest, _rest_offset, command_offset)) =
+                parse_slash_name_from_any_line(&text)
         {
-            let treat_as_plain_text = input_starts_with_space || name.contains('/');
+            let treat_as_plain_text =
+                (command_offset == 0 && input_starts_with_space) || name.contains('/');
             if !treat_as_plain_text {
                 let is_known = find_slash_command(
                     name,
@@ -2858,14 +2862,7 @@ impl ChatComposer {
         let in_slash_context = self.slash_commands_enabled()
             && !self.draft.is_bash_mode
             && (matches!(self.popups.active, ActivePopup::Command(_))
-                || self
-                    .draft
-                    .textarea
-                    .text()
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .starts_with('/'));
+                || parse_slash_name_from_any_line(self.draft.textarea.text()).is_some());
         if !self.draft.disable_paste_burst
             && self.draft.paste_burst.is_active()
             && !in_slash_context
@@ -2932,15 +2929,14 @@ impl ChatComposer {
         }
     }
 
-    /// Check if the first line is a bare slash command (no args) and dispatch it.
+    /// Check if any line is a bare slash command (no args) and dispatch it.
     /// Returns Some(InputResult) if a command was dispatched, None otherwise.
     fn try_dispatch_bare_slash_command(&mut self) -> Option<InputResult> {
         if !self.slash_commands_enabled() || self.draft.is_bash_mode {
             return None;
         }
         let text = self.draft.textarea.text();
-        let first_line = text.lines().next().unwrap_or("");
-        let (name, rest, _rest_offset) = parse_slash_name(first_line)?;
+        let (name, rest, _rest_offset, command_offset) = parse_slash_name_from_any_line(text)?;
         if !rest.is_empty() {
             return None;
         }
@@ -2950,7 +2946,14 @@ impl ChatComposer {
             &self.service_tier_commands,
         )?;
         if command.supports_inline_args()
-            && parse_slash_name(text).is_some_and(|(_, full_rest, _)| !full_rest.is_empty())
+            && parse_slash_name_from_any_line(text)
+                .is_some_and(|(_, full_rest, _, _)| !full_rest.is_empty())
+        {
+            return None;
+        }
+        if command.supports_inline_args()
+            && command_offset > 0
+            && !text[..command_offset].trim().is_empty()
         {
             return None;
         }
@@ -2975,12 +2978,11 @@ impl ChatComposer {
             return None;
         }
         let text = self.draft.textarea.text().to_string();
-        if text.starts_with(' ') {
+        let (name, rest, rest_offset, command_offset) = parse_slash_name_from_any_line(&text)?;
+        if command_offset == 0 && text.starts_with(' ') {
             return None;
         }
-
-        let (name, rest, rest_offset) = parse_slash_name(&text)?;
-        if rest.is_empty() || name.contains('/') {
+        if name.contains('/') {
             return None;
         }
 
@@ -3001,19 +3003,27 @@ impl ChatComposer {
 
         self.stage_slash_command_history(&command);
 
-        let mut args_elements = Self::slash_command_args_elements(
-            rest,
-            rest_offset,
-            &self.draft.textarea.text_elements(),
-        );
-        let trimmed_rest = rest.trim();
-        args_elements = Self::trim_text_elements(rest, trimmed_rest, args_elements);
+        let trimmed_rest = slash_command_rest_with_prefix(&text, rest, command_offset);
+        if trimmed_rest.is_empty() {
+            return None;
+        }
+        let args_elements = if command_offset == 0 {
+            let mut args_elements = Self::slash_command_args_elements(
+                rest,
+                rest_offset,
+                &self.draft.textarea.text_elements(),
+            );
+            args_elements = Self::trim_text_elements(rest, &trimmed_rest, args_elements);
+            args_elements
+        } else {
+            Vec::new()
+        };
         let SlashCommandItem::Builtin(cmd) = command else {
             return None;
         };
         Some(InputResult::CommandWithArgs(
             cmd,
-            trimmed_rest.to_string(),
+            trimmed_rest,
             args_elements,
         ))
     }
@@ -3033,15 +3043,22 @@ impl ChatComposer {
         record_history: bool,
     ) -> Option<(String, Vec<TextElement>)> {
         let (prepared_text, prepared_elements) = self.prepare_submission_text(record_history)?;
-        let (_, prepared_rest, prepared_rest_offset) = parse_slash_name(&prepared_text)?;
-        let mut args_elements = Self::slash_command_args_elements(
-            prepared_rest,
-            prepared_rest_offset,
-            &prepared_elements,
-        );
-        let trimmed_rest = prepared_rest.trim();
-        args_elements = Self::trim_text_elements(prepared_rest, trimmed_rest, args_elements);
-        Some((trimmed_rest.to_string(), args_elements))
+        let (_, prepared_rest, prepared_rest_offset, command_offset) =
+            parse_slash_name_from_any_line(&prepared_text)?;
+        let trimmed_rest =
+            slash_command_rest_with_prefix(&prepared_text, prepared_rest, command_offset);
+        let args_elements = if command_offset == 0 {
+            let mut args_elements = Self::slash_command_args_elements(
+                prepared_rest,
+                prepared_rest_offset,
+                &prepared_elements,
+            );
+            args_elements = Self::trim_text_elements(prepared_rest, &trimmed_rest, args_elements);
+            args_elements
+        } else {
+            Vec::new()
+        };
+        Some((trimmed_rest, args_elements))
     }
 
     fn reject_slash_command_if_unavailable(&self, command: &SlashCommandItem) -> bool {
@@ -3059,7 +3076,12 @@ impl ChatComposer {
     }
 
     fn should_parse_as_slash_on_dequeue_from_raw_text(&self, text: &str) -> bool {
-        self.slash_commands_enabled() && !text.starts_with(' ') && text.trim().starts_with('/')
+        self.slash_commands_enabled()
+            && parse_slash_name_from_any_line(text).is_some_and(
+                |(_name, _rest, _rest_offset, command_offset)| {
+                    command_offset != 0 || !text.starts_with(' ')
+                },
+            )
     }
 
     fn queued_input_action(
@@ -3067,7 +3089,7 @@ impl ChatComposer {
         prepared_text: &str,
         defer_slash_validation: bool,
     ) -> QueuedInputAction {
-        if defer_slash_validation && prepared_text.starts_with('/') {
+        if defer_slash_validation && parse_slash_name_from_any_line(prepared_text).is_some() {
             QueuedInputAction::ParseSlash
         } else if prepared_text.starts_with('!') {
             QueuedInputAction::RunShell
@@ -7953,6 +7975,7 @@ mod tests {
 
         assert_queued_slash("/compact");
         assert_queued_slash("/review check regressions");
+        assert_queued_slash("check regressions\n/review");
         assert_queued_slash("/fast");
         assert_queued_slash("/does-not-exist");
     }

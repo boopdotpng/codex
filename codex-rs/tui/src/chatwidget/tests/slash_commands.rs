@@ -623,6 +623,60 @@ async fn goal_slash_command_emits_set_goal_event() {
 }
 
 #[tokio::test]
+async fn goal_slash_command_at_start_of_later_line_uses_prior_text_as_objective() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    let command = "improve benchmark coverage\n/goal";
+
+    submit_composer_text(&mut chat, command);
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalObjective {
+        thread_id: actual_thread_id,
+        objective,
+        mode,
+    } = event
+    else {
+        panic!("expected SetThreadGoalObjective, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(objective, "improve benchmark coverage");
+    assert_eq!(mode, crate::app_event::ThreadGoalSetMode::ConfirmIfExists);
+    assert_no_submit_op(&mut op_rx);
+    assert_eq!(recall_latest_after_clearing(&mut chat), command);
+}
+
+#[tokio::test]
+async fn queued_lower_line_goal_slash_command_dispatches_after_thread_starts() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    let command = "improve benchmark coverage\n/goal";
+
+    submit_composer_text(&mut chat, command);
+    assert_eq!(chat.input_queue.queued_user_messages.len(), 1);
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.maybe_send_next_queued_input();
+
+    let event = rx.try_recv().expect("expected goal objective event");
+    let AppEvent::SetThreadGoalObjective {
+        thread_id: actual_thread_id,
+        objective,
+        ..
+    } = event
+    else {
+        panic!("expected SetThreadGoalObjective, got {event:?}");
+    };
+    assert_eq!(actual_thread_id, thread_id);
+    assert_eq!(objective, "improve benchmark coverage");
+    assert_no_submit_op(&mut op_rx);
+}
+
+#[tokio::test]
 async fn goal_slash_command_uses_plain_text_for_mentions() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);

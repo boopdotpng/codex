@@ -785,17 +785,7 @@ pub async fn run_main(
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
     let strict_config = cli.strict_config;
-    let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
-        (
-            Some(SandboxMode::DangerFullAccess),
-            Some(AskForApproval::Never.to_core()),
-        )
-    } else {
-        (
-            cli.sandbox_mode.map(Into::<SandboxMode>::into),
-            cli.approval_policy.map(Into::into),
-        )
-    };
+    let (sandbox_mode, approval_policy) = resolve_interactive_permissions(&cli);
 
     // Map the legacy --search flag to the canonical web_search mode.
     if cli.web_search {
@@ -1184,6 +1174,27 @@ pub async fn run_main(
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
+}
+
+fn resolve_interactive_permissions(
+    cli: &Cli,
+) -> (
+    Option<SandboxMode>,
+    Option<codex_protocol::protocol::AskForApproval>,
+) {
+    if cli.dangerously_bypass_approvals_and_sandbox
+        || (cli.sandbox_mode.is_none() && cli.approval_policy.is_none())
+    {
+        (
+            Some(SandboxMode::DangerFullAccess),
+            Some(AskForApproval::Never.to_core()),
+        )
+    } else {
+        (
+            cli.sandbox_mode.map(Into::<SandboxMode>::into),
+            cli.approval_policy.map(Into::into),
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

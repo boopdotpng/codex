@@ -8,7 +8,8 @@
 use super::goal_validation::GoalObjectiveValidationSource;
 use super::*;
 use crate::app_event::ThreadGoalSetMode;
-use crate::bottom_pane::prompt_args::parse_slash_name;
+use crate::bottom_pane::prompt_args::parse_slash_name_from_any_line;
+use crate::bottom_pane::prompt_args::slash_command_rest_with_prefix;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
@@ -801,7 +802,8 @@ impl ChatWidget {
             text_elements,
             mention_bindings,
         } = user_message;
-        let Some((name, rest, rest_offset)) = parse_slash_name(&text) else {
+        let Some((name, rest, rest_offset, command_offset)) = parse_slash_name_from_any_line(&text)
+        else {
             self.submit_user_message(UserMessage {
                 text,
                 local_images,
@@ -870,23 +872,30 @@ impl ChatWidget {
             return QueueDrain::Stop;
         };
 
-        let trimmed_start = rest.trim_start();
-        let leading_trimmed = rest.len().saturating_sub(trimmed_start.len());
-        let trimmed_rest = trimmed_start.trim_end();
-        let args_elements = Self::slash_command_args_elements(
-            trimmed_rest,
-            rest_offset + leading_trimmed,
-            &text_elements,
-        );
+        let trimmed_rest = slash_command_rest_with_prefix(&text, rest, command_offset);
+        let args_elements = if command_offset == 0 {
+            let trimmed_start = rest.trim_start();
+            let leading_trimmed = rest.len().saturating_sub(trimmed_start.len());
+            Self::slash_command_args_elements(
+                trimmed_rest.as_str(),
+                rest_offset + leading_trimmed,
+                &text_elements,
+            )
+        } else {
+            Vec::new()
+        };
         if cmd == SlashCommand::Goal
-            && !self.goal_objective_is_allowed(trimmed_rest, GoalObjectiveValidationSource::Queued)
+            && !self.goal_objective_is_allowed(
+                trimmed_rest.as_str(),
+                GoalObjectiveValidationSource::Queued,
+            )
         {
             return QueueDrain::Continue;
         }
         self.dispatch_prepared_command_with_args(
             cmd,
             PreparedSlashCommandArgs {
-                args: trimmed_rest.to_string(),
+                args: trimmed_rest,
                 text_elements: args_elements,
                 local_images,
                 remote_image_urls,

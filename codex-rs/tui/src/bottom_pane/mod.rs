@@ -44,6 +44,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use std::time::Duration;
 use std::time::Instant;
@@ -51,6 +52,7 @@ use std::time::Instant;
 mod action_required_title;
 mod app_link_view;
 mod approval_overlay;
+mod deferred_interrupt;
 mod mcp_server_elicitation;
 mod multi_select_picker;
 mod request_user_input;
@@ -67,6 +69,7 @@ pub(crate) use app_link_view::AppLinkViewParams;
 pub(crate) use approval_overlay::ApprovalOverlay;
 pub(crate) use approval_overlay::ApprovalRequest;
 pub(crate) use approval_overlay::format_requested_permissions_rule;
+use deferred_interrupt::DeferredInterruptRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
 pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
 pub(crate) use request_user_input::RequestUserInputOverlay;
@@ -163,6 +166,8 @@ const APPROVAL_PROMPT_TYPING_IDLE_DELAY: Duration = Duration::from_secs(1);
 /// practice (especially for users accustomed to shells and other TUIs). Disable it for now while we
 /// rethink a better quit/interrupt design.
 pub(crate) const DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED: bool = false;
+const DEFERRED_INTERRUPT_IDLE_DELAY: Duration = Duration::from_secs(5);
+const DEFERRED_INTERRUPT_MESSAGE: &str = "waiting for you to stop typing";
 
 /// The result of offering a cancellation key to a bottom-pane surface.
 ///
@@ -230,6 +235,7 @@ pub(crate) struct BottomPane {
     pending_input_preview: PendingInputPreview,
     /// Inactive threads with pending approval requests.
     pending_thread_approvals: PendingThreadApprovals,
+    deferred_interrupt_request: Option<DeferredInterruptRequest>,
     context_window_percent: Option<i64>,
     context_window_used_tokens: Option<i64>,
     keymap: RuntimeKeymap,
@@ -285,6 +291,7 @@ impl BottomPane {
             unified_exec_footer: UnifiedExecFooter::new(),
             pending_input_preview: PendingInputPreview::new(),
             pending_thread_approvals: PendingThreadApprovals::new(),
+            deferred_interrupt_request: None,
             esc_backtrack_hint: false,
             animations_enabled,
             context_window_percent: None,
@@ -531,6 +538,10 @@ impl BottomPane {
         {
             self.request_redraw_in(delay);
         }
+        if self.deferred_interrupt_request.is_some() {
+            self.schedule_deferred_interrupt_check();
+            self.request_redraw();
+        }
     }
 
     fn maybe_show_delayed_approval_requests_at(&mut self, now: Instant) {
@@ -711,6 +722,7 @@ impl BottomPane {
             if has_pasted_text {
                 self.record_composer_activity_at(Instant::now());
             }
+            self.composer.sync_popups();
             if needs_redraw {
                 self.request_redraw();
             }
@@ -719,6 +731,8 @@ impl BottomPane {
 
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.composer.insert_str(text);
+        self.record_composer_activity_at(Instant::now());
+        self.composer.sync_popups();
         self.request_redraw();
     }
 
@@ -727,6 +741,7 @@ impl BottomPane {
     }
 
     fn pre_draw_tick_at(&mut self, now: Instant) {
+        self.maybe_promote_deferred_interrupt_request_at(now);
         self.composer.sync_popups();
         self.maybe_show_delayed_approval_requests_at(now);
         self.schedule_active_view_frame();
@@ -1291,6 +1306,16 @@ impl BottomPane {
 
     /// Called when the agent requests user input.
     pub fn push_user_input_request(&mut self, request: ToolRequestUserInputParams) {
+        if self.defer_interrupt_request(DeferredInterruptRequest::UserInput {
+            request: request.clone(),
+        }) {
+            return;
+        }
+
+        self.push_user_input_request_immediately(request);
+    }
+
+    fn push_user_input_request_immediately(&mut self, request: ToolRequestUserInputParams) {
         let request = if let Some(view) = self.view_stack.last_mut() {
             match view.try_consume_user_input_request(request) {
                 Some(request) => request,
@@ -1320,6 +1345,19 @@ impl BottomPane {
     }
 
     pub(crate) fn push_mcp_server_elicitation_request(
+        &mut self,
+        request: McpServerElicitationFormRequest,
+    ) {
+        if self.defer_interrupt_request(DeferredInterruptRequest::McpElicitation {
+            request: request.clone(),
+        }) {
+            return;
+        }
+
+        self.push_mcp_server_elicitation_request_immediately(request);
+    }
+
+    fn push_mcp_server_elicitation_request_immediately(
         &mut self,
         request: McpServerElicitationFormRequest,
     ) {
@@ -1415,6 +1453,16 @@ impl BottomPane {
             .retain(|delayed| !delayed.request.matches_resolved_request(request));
         let delayed_changed = self.delayed_approval_requests.len() != delayed_len;
 
+        if self
+            .deferred_interrupt_request
+            .as_ref()
+            .is_some_and(|deferred| deferred.matches_resolved_request(request))
+        {
+            self.deferred_interrupt_request = None;
+            self.request_redraw();
+            return true;
+        }
+
         if self.view_stack.is_empty() {
             if delayed_changed {
                 self.request_redraw();
@@ -1459,6 +1507,67 @@ impl BottomPane {
     fn resume_status_timer_after_modal(&mut self) {
         if let Some(status) = self.status.as_mut() {
             status.resume_timer();
+        }
+    }
+
+    fn defer_interrupt_request(&mut self, request: DeferredInterruptRequest) -> bool {
+        if !self.should_defer_interrupt_request() {
+            return false;
+        }
+
+        if self.deferred_interrupt_request.is_some() {
+            self.promote_deferred_interrupt_request();
+            return false;
+        }
+
+        self.deferred_interrupt_request = Some(request);
+        self.schedule_deferred_interrupt_check();
+        self.request_redraw();
+        true
+    }
+
+    fn should_defer_interrupt_request(&self) -> bool {
+        self.view_stack.is_empty() && self.has_recent_composer_activity_at(Instant::now())
+    }
+
+    fn has_recent_composer_activity_at(&self, now: Instant) -> bool {
+        self.last_composer_activity_at
+            .is_some_and(|at| now.saturating_duration_since(at) < DEFERRED_INTERRUPT_IDLE_DELAY)
+    }
+
+    fn schedule_deferred_interrupt_check(&self) {
+        if let Some(last_activity_at) = self.last_composer_activity_at {
+            let elapsed = Instant::now().saturating_duration_since(last_activity_at);
+            let delay = DEFERRED_INTERRUPT_IDLE_DELAY.saturating_sub(elapsed);
+            self.request_redraw_in(delay);
+        }
+    }
+
+    fn maybe_promote_deferred_interrupt_request_at(&mut self, now: Instant) {
+        if self.deferred_interrupt_request.is_none() {
+            return;
+        }
+
+        if self.has_recent_composer_activity_at(now) {
+            self.schedule_deferred_interrupt_check();
+            return;
+        }
+
+        self.promote_deferred_interrupt_request();
+    }
+
+    fn promote_deferred_interrupt_request(&mut self) {
+        let Some(request) = self.deferred_interrupt_request.take() else {
+            return;
+        };
+
+        match request {
+            DeferredInterruptRequest::UserInput { request } => {
+                self.push_user_input_request_immediately(request);
+            }
+            DeferredInterruptRequest::McpElicitation { request } => {
+                self.push_mcp_server_elicitation_request_immediately(request);
+            }
         }
     }
 
@@ -1578,23 +1687,41 @@ impl BottomPane {
             let has_pending_input = !self.pending_input_preview.queued_messages.is_empty()
                 || !self.pending_input_preview.pending_steers.is_empty()
                 || !self.pending_input_preview.rejected_steers.is_empty();
+            let has_deferred_interrupt = self.deferred_interrupt_request.is_some();
             let has_status_or_footer =
                 self.status.is_some() || !self.unified_exec_footer.is_empty();
-            let has_inline_previews = has_pending_thread_approvals || has_pending_input;
+            let has_inline_previews =
+                has_pending_thread_approvals || has_pending_input || has_deferred_interrupt;
             if has_inline_previews && has_status_or_footer {
                 flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
             }
-            flex.push(
-                /*flex*/ 1,
-                RenderableItem::Borrowed(&self.pending_thread_approvals),
-            );
-            if has_pending_thread_approvals && has_pending_input {
-                flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
+            let mut inline_sections = 0;
+            if has_pending_thread_approvals {
+                flex.push(
+                    /*flex*/ 1,
+                    RenderableItem::Borrowed(&self.pending_thread_approvals),
+                );
+                inline_sections += 1;
             }
-            flex.push(
-                /*flex*/ 1,
-                RenderableItem::Borrowed(&self.pending_input_preview),
-            );
+            if has_pending_input {
+                if inline_sections > 0 {
+                    flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
+                }
+                flex.push(
+                    /*flex*/ 1,
+                    RenderableItem::Borrowed(&self.pending_input_preview),
+                );
+                inline_sections += 1;
+            }
+            if has_deferred_interrupt {
+                if inline_sections > 0 {
+                    flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
+                }
+                flex.push(
+                    /*flex*/ 0,
+                    RenderableItem::Owned(Line::from(DEFERRED_INTERRUPT_MESSAGE.dim()).into()),
+                );
+            }
             if !has_inline_previews && has_status_or_footer {
                 flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
             }
