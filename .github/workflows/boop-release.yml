@@ -1,0 +1,81 @@
+name: boop-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload artifacts to.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x64:
+    name: Build Linux x64 artifact
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: thin
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26
+        with:
+          toolchain: 1.93.0
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev libubsan1
+
+      - name: Use hermetic Cargo home
+        run: |
+          cargo_home="${GITHUB_WORKSPACE}/.cargo-home"
+          mkdir -p "${cargo_home}/bin"
+          echo "CARGO_HOME=${cargo_home}" >> "$GITHUB_ENV"
+          echo "${cargo_home}/bin" >> "$GITHUB_PATH"
+          : > "${cargo_home}/config.toml"
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.14.0
+          use-cache: false
+
+      - name: Install musl build tools
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
+      - name: Configure musl environment
+        run: |
+          echo "AWS_LC_SYS_NO_JITTER_ENTROPY=1" >> "$GITHUB_ENV"
+          echo "AWS_LC_SYS_NO_JITTER_ENTROPY_X86_64_UNKNOWN_LINUX_MUSL=1" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=" >> "$GITHUB_ENV"
+          echo "CARGO_ENCODED_RUSTFLAGS=" >> "$GITHUB_ENV"
+          echo "RUSTDOCFLAGS=" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_RUSTFLAGS=" >> "$GITHUB_ENV"
+
+      - name: Configure musl rusty_v8 artifact overrides
+        uses: ./.github/actions/setup-rusty-v8-musl
+        with:
+          target: x86_64-unknown-linux-musl
+
+      - name: Build codex
+        run: cargo build --target "$TARGET" --release --bin codex
+
+      - name: Package artifact
+        run: |
+          artifact="codex-${TARGET}.tar.gz"
+          tar -C "target/${TARGET}/release" -czf "${GITHUB_WORKSPACE}/${artifact}" codex
+          echo "ARTIFACT=${artifact}" >> "$GITHUB_ENV"
+
+      - name: Upload release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" "${GITHUB_WORKSPACE}/${ARTIFACT}" --repo "$GITHUB_REPOSITORY" --clobber
