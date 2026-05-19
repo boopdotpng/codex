@@ -1,3 +1,65 @@
+# Fork Maintenance
+
+This checkout is a personal fork of `openai/codex`. Maintain it as a stable
+released Codex plus local modifications on top.
+
+## Remotes and branches
+
+- `origin` is the upstream OpenAI repository: `https://github.com/openai/codex.git`.
+- `fork` is the personal fork: `git@github.com:boopdotpng/codex.git`.
+- `main` is the maintained fork branch. It must be based on the latest stable
+  release tag, with local fork commits applied on top.
+- `upstream-main` is only a local mirror of `origin/main` for inspection. Do not
+  base day-to-day fork work on `upstream-main`, because it may contain unreleased
+  upstream changes.
+- Release tags use names like `rust-v0.131.0`. Prefer stable tags without
+  `-alpha`, `-beta`, or other prerelease suffixes unless explicitly requested.
+
+## Updating to a new stable release
+
+When a new stable Codex release is available, move the fork by replaying local
+commits from the previous stable base onto the new stable tag:
+
+```sh
+git fetch origin --tags --prune
+git checkout main
+git branch backup/main-before-<new-release>
+git rebase --onto rust-v<new-version> rust-v<old-version> main
+git push fork main --force-with-lease
+```
+
+Example for moving from `rust-v0.131.0` to `rust-v0.132.0`:
+
+```sh
+git fetch origin --tags --prune
+git checkout main
+git branch backup/main-before-v132
+git rebase --onto rust-v0.132.0 rust-v0.131.0 main
+git push fork main --force-with-lease
+```
+
+If the local fork changes are intentionally managed as separate patch commits,
+it is also acceptable to rebuild `main` from the new release tag and cherry-pick
+the fork commits:
+
+```sh
+git checkout -B main rust-v<new-version>
+git cherry-pick <fork-commit>...
+git push fork main --force-with-lease
+```
+
+## Agent rules for this fork
+
+- Keep the worktree on stable release tags plus fork commits. Do not merge
+  unreleased `origin/main` into `main` unless the user explicitly asks.
+- Before rewriting `main`, create a backup branch named
+  `backup/main-before-<release-or-date>`.
+- Use `--force-with-lease`, never plain `--force`, when updating `fork/main`
+  after a rebase or release-base reset.
+- After updating the release base, verify `git log --oneline --decorate
+  --graph --max-count=20` and `git status --short --branch`.
+- Keep this section current when the fork-maintenance workflow changes.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
