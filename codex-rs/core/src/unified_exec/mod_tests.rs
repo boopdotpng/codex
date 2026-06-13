@@ -193,6 +193,7 @@ async fn exec_command_with_tty(
         raw_output: collected,
         truncation_policy: turn.truncation_policy,
         max_output_tokens: None,
+        monitor: false,
         process_id: response_process_id,
         exit_code,
         original_token_count: Some(approx_token_count(&text)),

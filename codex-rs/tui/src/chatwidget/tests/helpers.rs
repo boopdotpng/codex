@@ -820,6 +820,7 @@ pub(super) fn begin_exec_with_source(
         process_id: None,
         source,
         status: AppServerCommandExecutionStatus::InProgress,
+        monitored: false,
         command_actions,
         aggregated_output: None,
         exit_code: None,
@@ -843,6 +844,7 @@ pub(super) fn begin_unified_exec_startup(
         process_id: Some(process_id.to_string()),
         source: ExecCommandSource::UnifiedExecStartup,
         status: AppServerCommandExecutionStatus::InProgress,
+        monitored: false,
         command_actions: Vec::new(),
         aggregated_output: None,
         exit_code: None,
@@ -1054,6 +1056,7 @@ pub(super) fn end_exec(
         cwd,
         process_id,
         source,
+        monitored,
         command_actions,
         ..
     } = begin_item
@@ -1073,6 +1076,7 @@ pub(super) fn end_exec(
             } else {
                 AppServerCommandExecutionStatus::Failed
             },
+            monitored,
             command_actions,
             aggregated_output: (!aggregated.is_empty()).then_some(aggregated),
             exit_code: Some(exit_code),

@@ -3847,6 +3847,11 @@
             "id": {
               "type": "string"
             },
+            "monitored": {
+              "default": false,
+              "description": "Whether this command wakes the agent when background output arrives or exits.",
+              "type": "boolean"
+            },
             "processId": {
               "description": "Identifier for the underlying PTY process (when available).",
               "type": [

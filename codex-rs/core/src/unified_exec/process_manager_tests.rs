@@ -171,6 +171,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         process_id: 123,
         yield_time_ms: 1000,
         max_output_tokens: None,
+        monitor: false,
         #[allow(deprecated)]
         cwd: turn.cwd.clone(),
         #[allow(deprecated)]
@@ -205,6 +206,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         "PRE_DENIAL_MARKER".to_string(),
         "Network access denied".to_string(),
         Duration::from_millis(7),
+        /*monitored*/ false,
     )
     .await;
 

@@ -16,6 +16,7 @@ fn agent_status_uses_bounded_buffered_activity() {
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::Completed,
+                monitored: false,
                 command_actions: Vec::new(),
                 aggregated_output: Some("unbounded output\n".repeat(10_000)),
                 exit_code: Some(0),

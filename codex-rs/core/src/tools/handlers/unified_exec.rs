@@ -40,6 +40,8 @@ pub(crate) struct ExecCommandArgs {
     #[serde(default)]
     max_output_tokens: Option<usize>,
     #[serde(default)]
+    monitor: bool,
+    #[serde(default)]
     sandbox_permissions: SandboxPermissions,
     #[serde(default)]
     additional_permissions: Option<AdditionalPermissionProfile>,

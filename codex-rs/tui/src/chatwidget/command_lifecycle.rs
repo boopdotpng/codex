@@ -23,6 +23,7 @@ impl ChatWidget {
             command,
             process_id,
             source,
+            monitored,
             command_actions,
             ..
         } = &item
@@ -33,7 +34,12 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         if is_unified_exec_source(*source) {
             if *source == ExecCommandSource::UnifiedExecStartup {
-                self.track_unified_exec_process_begin(id, process_id.as_deref(), command);
+                self.track_unified_exec_process_begin(
+                    id,
+                    process_id.as_deref(),
+                    command,
+                    *monitored,
+                );
             }
             if !self.bottom_pane.is_task_running() {
                 return;
@@ -167,6 +173,7 @@ impl ChatWidget {
         call_id: &str,
         process_id: Option<&str>,
         command: &str,
+        monitored: bool,
     ) {
         let key = process_id.unwrap_or(call_id).to_string();
         let command = split_command_string(command);
@@ -178,12 +185,14 @@ impl ChatWidget {
         {
             existing.call_id = call_id.to_string();
             existing.command_display = command_display;
+            existing.monitored = monitored;
             existing.recent_chunks.clear();
         } else {
             self.unified_exec_processes.push(UnifiedExecProcessSummary {
                 key,
                 call_id: call_id.to_string(),
                 command_display,
+                monitored,
                 recent_chunks: Vec::new(),
             });
         }
@@ -208,7 +217,10 @@ impl ChatWidget {
         let processes = self
             .unified_exec_processes
             .iter()
-            .map(|process| process.command_display.clone())
+            .map(|process| crate::bottom_pane::UnifiedExecFooterProcess {
+                command: process.command_display.clone(),
+                monitored: process.monitored,
+            })
             .collect();
         self.bottom_pane.set_unified_exec_processes(processes);
     }

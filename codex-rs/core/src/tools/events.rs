@@ -92,28 +92,21 @@ fn tracker_update_for_known_delta<'a>(
     }
 }
 
-pub(crate) async fn emit_exec_command_begin(
-    ctx: ToolEventCtx<'_>,
-    command: &[String],
-    cwd: &AbsolutePathBuf,
-    parsed_cmd: &[ParsedCommand],
-    source: ExecCommandSource,
-    interaction_input: Option<String>,
-    process_id: Option<&str>,
-) {
+async fn emit_exec_command_begin(ctx: ToolEventCtx<'_>, exec_input: ExecCommandInput<'_>) {
     ctx.session
         .send_event(
             ctx.turn,
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id: ctx.call_id.to_string(),
-                process_id: process_id.map(str::to_owned),
+                process_id: exec_input.process_id.map(str::to_owned),
                 turn_id: ctx.turn.sub_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
-                command: command.to_vec(),
-                cwd: cwd.clone(),
-                parsed_cmd: parsed_cmd.to_vec(),
-                source,
-                interaction_input,
+                command: exec_input.command.to_vec(),
+                cwd: exec_input.cwd.clone(),
+                parsed_cmd: exec_input.parsed_cmd.to_vec(),
+                source: exec_input.source,
+                interaction_input: exec_input.interaction_input.map(str::to_owned),
+                monitored: exec_input.monitored,
             }),
         )
         .await;
@@ -137,6 +130,7 @@ pub(crate) enum ToolEmitter {
         source: ExecCommandSource,
         parsed_cmd: Vec<ParsedCommand>,
         process_id: Option<String>,
+        monitored: bool,
     },
 }
 
@@ -168,6 +162,7 @@ impl ToolEmitter {
         cwd: AbsolutePathBuf,
         source: ExecCommandSource,
         process_id: Option<String>,
+        monitored: bool,
     ) -> Self {
         let parsed_cmd = parse_command(command);
         Self::UnifiedExec {
@@ -176,6 +171,7 @@ impl ToolEmitter {
             source,
             parsed_cmd,
             process_id,
+            monitored,
         }
     }
 
@@ -195,7 +191,7 @@ impl ToolEmitter {
                     ctx,
                     ExecCommandInput::new(
                         command, cwd, parsed_cmd, *source, /*interaction_input*/ None,
-                        /*process_id*/ None,
+                        /*process_id*/ None, /*monitored*/ false,
                     ),
                     stage,
                 )
@@ -317,6 +313,7 @@ impl ToolEmitter {
                     source,
                     parsed_cmd,
                     process_id,
+                    monitored,
                 },
                 stage,
             ) => {
@@ -329,6 +326,7 @@ impl ToolEmitter {
                         *source,
                         /*interaction_input*/ None,
                         process_id.as_deref(),
+                        *monitored,
                     ),
                     stage,
                 )
@@ -437,6 +435,7 @@ struct ExecCommandInput<'a> {
     source: ExecCommandSource,
     interaction_input: Option<&'a str>,
     process_id: Option<&'a str>,
+    monitored: bool,
 }
 
 impl<'a> ExecCommandInput<'a> {
@@ -447,6 +446,7 @@ impl<'a> ExecCommandInput<'a> {
         source: ExecCommandSource,
         interaction_input: Option<&'a str>,
         process_id: Option<&'a str>,
+        monitored: bool,
     ) -> Self {
         Self {
             command,
@@ -455,6 +455,7 @@ impl<'a> ExecCommandInput<'a> {
             source,
             interaction_input,
             process_id,
+            monitored,
         }
     }
 }
@@ -476,16 +477,7 @@ async fn emit_exec_stage(
 ) {
     match stage {
         ToolEventStage::Begin => {
-            emit_exec_command_begin(
-                ctx,
-                exec_input.command,
-                exec_input.cwd,
-                exec_input.parsed_cmd,
-                exec_input.source,
-                exec_input.interaction_input.map(str::to_owned),
-                exec_input.process_id,
-            )
-            .await;
+            emit_exec_command_begin(ctx, exec_input).await;
         }
         ToolEventStage::Success { output, .. }
         | ToolEventStage::Failure(ToolEventFailure::Output(output)) => {
@@ -551,6 +543,7 @@ async fn emit_exec_end(
                 parsed_cmd: exec_input.parsed_cmd.to_vec(),
                 source: exec_input.source,
                 interaction_input: exec_input.interaction_input.map(str::to_owned),
+                monitored: exec_input.monitored,
                 stdout: exec_result.stdout,
                 stderr: exec_result.stderr,
                 aggregated_output: exec_result.aggregated_output,

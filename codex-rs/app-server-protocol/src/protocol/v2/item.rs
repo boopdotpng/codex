@@ -261,6 +261,9 @@ pub enum ThreadItem {
         #[serde(default)]
         source: CommandExecutionSource,
         status: CommandExecutionStatus,
+        /// Whether this command wakes the agent when background output arrives or exits.
+        #[serde(default)]
+        monitored: bool,
         /// A best-effort parsing of the command to understand the action(s) it will perform.
         /// This returns a list of CommandAction objects because a single shell command may
         /// be composed of many commands piped together.

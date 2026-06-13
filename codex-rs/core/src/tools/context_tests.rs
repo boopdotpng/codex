@@ -431,6 +431,7 @@ fn exec_command_tool_output_formats_truncated_response() {
         raw_output: b"token one token two token three token four token five".to_vec(),
         truncation_policy: TruncationPolicy::Tokens(10_000),
         max_output_tokens: Some(4),
+        monitor: false,
         process_id: None,
         exit_code: Some(0),
         original_token_count: Some(10),

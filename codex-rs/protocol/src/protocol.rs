@@ -3182,6 +3182,10 @@ pub struct ExecCommandBeginEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub interaction_input: Option<String>,
+    /// Whether this unified exec session will notify the model when background
+    /// output arrives or the process exits.
+    #[serde(default)]
+    pub monitored: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -3208,6 +3212,10 @@ pub struct ExecCommandEndEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub interaction_input: Option<String>,
+    /// Whether this unified exec session notified the model while running in
+    /// the background.
+    #[serde(default)]
+    pub monitored: bool,
 
     /// Captured stdout
     pub stdout: String,

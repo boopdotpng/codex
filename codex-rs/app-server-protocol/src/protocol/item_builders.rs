@@ -73,6 +73,7 @@ pub fn build_command_execution_approval_request_item(
         process_id: None,
         source: CommandExecutionSource::Agent,
         status: CommandExecutionStatus::InProgress,
+        monitored: false,
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -93,6 +94,7 @@ pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> Th
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: CommandExecutionStatus::InProgress,
+        monitored: payload.monitored,
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -120,6 +122,7 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: (&payload.status).into(),
+        monitored: payload.monitored,
         command_actions: payload
             .parsed_cmd
             .iter()
@@ -154,6 +157,7 @@ pub fn build_item_from_guardian_event(
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status,
+                monitored: false,
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,
@@ -190,6 +194,7 @@ pub fn build_item_from_guardian_event(
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status,
+                monitored: false,
                 command_actions,
                 aggregated_output: None,
                 exit_code: None,

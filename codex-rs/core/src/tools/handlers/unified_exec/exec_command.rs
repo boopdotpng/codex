@@ -166,6 +166,7 @@ impl ExecCommandHandler {
             tty,
             yield_time_ms,
             max_output_tokens,
+            monitor,
             sandbox_permissions,
             additional_permissions,
             justification,
@@ -252,6 +253,7 @@ impl ExecCommandHandler {
                 raw_output: output.into_text().into_bytes(),
                 truncation_policy: turn.truncation_policy,
                 max_output_tokens,
+                monitor: false,
                 process_id: None,
                 exit_code: None,
                 original_token_count: None,
@@ -269,6 +271,7 @@ impl ExecCommandHandler {
                     process_id,
                     yield_time_ms,
                     max_output_tokens,
+                    monitor,
                     cwd,
                     sandbox_cwd: turn_environment.cwd.clone(),
                     environment,
@@ -297,6 +300,7 @@ impl ExecCommandHandler {
                     raw_output: output_text.into_bytes(),
                     truncation_policy: turn.truncation_policy,
                     max_output_tokens,
+                    monitor,
                     // Sandbox denial is terminal, so there is no live
                     // process for write_stdin to resume.
                     process_id: None,

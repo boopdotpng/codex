@@ -313,6 +313,7 @@ pub struct ExecCommandToolOutput {
     pub raw_output: Vec<u8>,
     pub truncation_policy: TruncationPolicy,
     pub max_output_tokens: Option<usize>,
+    pub monitor: bool,
     pub process_id: Option<i32>,
     pub exit_code: Option<i32>,
     pub original_token_count: Option<usize>,
@@ -422,6 +423,12 @@ impl ExecCommandToolOutput {
 
         if let Some(process_id) = &self.process_id {
             sections.push(format!("Process running with session ID {process_id}"));
+            if self.monitor {
+                sections.push(
+                    "Monitor active: Codex will wake when this command outputs text or exits. If you are blocked on this command, end your turn now instead of polling or sleeping."
+                        .to_string(),
+                );
+            }
         }
 
         if let Some(original_token_count) = self.original_token_count {

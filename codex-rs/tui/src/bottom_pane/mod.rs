@@ -23,6 +23,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::pending_input_preview::PendingInputPreview;
 use crate::bottom_pane::pending_thread_approvals::PendingThreadApprovals;
 use crate::bottom_pane::unified_exec_footer::UnifiedExecFooter;
+pub(crate) use crate::bottom_pane::unified_exec_footer::UnifiedExecFooterProcess;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -1208,7 +1209,7 @@ impl BottomPane {
     ///
     /// The summary may be displayed inline in the status row or as a dedicated
     /// footer row depending on whether a status indicator is currently visible.
-    pub(crate) fn set_unified_exec_processes(&mut self, processes: Vec<String>) {
+    pub(crate) fn set_unified_exec_processes(&mut self, processes: Vec<UnifiedExecFooterProcess>) {
         if self.unified_exec_footer.set_processes(processes) {
             self.sync_status_inline_message();
             self.request_redraw();
@@ -2401,7 +2402,10 @@ mod tests {
         let width = 120;
         let before = pane.desired_height(width);
 
-        pane.set_unified_exec_processes(vec!["sleep 5".to_string()]);
+        pane.set_unified_exec_processes(vec![UnifiedExecFooterProcess {
+            command: "sleep 5".to_string(),
+            monitored: false,
+        }]);
         let after = pane.desired_height(width);
 
         assert_eq!(after, before);

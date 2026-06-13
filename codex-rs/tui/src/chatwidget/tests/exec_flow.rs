@@ -362,6 +362,7 @@ async fn exec_end_without_begin_uses_event_command() {
             process_id: None,
             source: ExecCommandSource::Agent,
             status: AppServerCommandExecutionStatus::Completed,
+            monitored: false,
             command_actions,
             aggregated_output: Some("done".to_string()),
             exit_code: Some(0),
@@ -701,6 +702,7 @@ async fn unified_exec_wait_status_header_updates_on_late_command_display() {
         key: "proc-1".to_string(),
         call_id: "call-1".to_string(),
         command_display: "sleep 5".to_string(),
+        monitored: false,
         recent_chunks: Vec::new(),
     });
 

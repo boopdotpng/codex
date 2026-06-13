@@ -179,6 +179,7 @@ mod tests {
             process_id: None,
             source: CommandExecutionSource::Agent,
             status: CommandExecutionStatus::InProgress,
+            monitored: false,
             command_actions: Vec::new(),
             aggregated_output: None,
             exit_code: None,

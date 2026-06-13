@@ -54,6 +54,12 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
                 "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.".to_string(),
             )),
         ),
+        (
+            "monitor".to_string(),
+            JsonSchema::boolean(Some(
+                "Set true for a long-running command that may block progress after the initial output. If the command is still running when this tool returns, Codex will be woken when the command outputs text or exits; if you are explicitly waiting on that command, end your turn after starting the monitor instead of polling or sleeping.".to_string(),
+            )),
+        ),
     ]);
     if include_shell_parameter {
         properties.insert(
@@ -89,11 +95,11 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
         name: "exec_command".to_string(),
         description: if cfg!(windows) {
             format!(
-                "Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\n{}",
+                "Runs a command in a PTY, returning output or a session ID for ongoing interaction. Use monitor=true for long-running commands that should wake you on output or exit; when you are blocked on monitored output, end your turn after starting the command.\n\n{}",
                 windows_shell_guidance()
             )
         } else {
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
+            "Runs a command in a PTY, returning output or a session ID for ongoing interaction. Use monitor=true for long-running commands that should wake you on output or exit; when you are blocked on monitored output, end your turn after starting the command."
                 .to_string()
         },
         strict: false,

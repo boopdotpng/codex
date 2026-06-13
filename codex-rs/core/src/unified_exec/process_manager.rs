@@ -53,10 +53,13 @@ use crate::unified_exec::process::UnifiedExecProcess;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_tools::ToolName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use codex_utils_string::take_bytes_at_char_boundary;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -74,6 +77,7 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
     "Network access was denied by the Codex sandbox network proxy.";
 const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
 const INTERRUPT: &str = "\u{3}";
+const MONITOR_OUTPUT_MAX_BYTES: usize = 8192;
 
 /// Test-only override for deterministic unified exec process IDs.
 ///
@@ -298,6 +302,7 @@ async fn emit_failed_initial_exec_end_if_unstored(
     fallback_output: String,
     message: String,
     wall_time: Duration,
+    monitored: bool,
 ) {
     if process_started_alive {
         return;
@@ -314,6 +319,7 @@ async fn emit_failed_initial_exec_end_if_unstored(
         fallback_output,
         message,
         wall_time,
+        monitored,
     )
     .await;
 }
@@ -418,6 +424,7 @@ impl UnifiedExecProcessManager {
             cwd.clone(),
             ExecCommandSource::UnifiedExecStartup,
             Some(request.process_id.to_string()),
+            request.monitor,
         );
         emitter.emit(event_ctx, ToolEventStage::Begin).await;
 
@@ -437,6 +444,7 @@ impl UnifiedExecProcessManager {
                 start,
                 request.process_id,
                 request.tty,
+                request.monitor,
                 deferred_network_approval.clone(),
                 Arc::clone(&transcript),
                 Arc::clone(&initial_exec_command_active),
@@ -497,6 +505,7 @@ impl UnifiedExecProcessManager {
                 text.clone(),
                 message.clone(),
                 wall_time,
+                request.monitor,
             )
             .await;
             self.release_process_id(request.process_id).await;
@@ -517,6 +526,7 @@ impl UnifiedExecProcessManager {
                 text.clone(),
                 message.clone(),
                 wall_time,
+                request.monitor,
             )
             .await;
             self.release_process_id(request.process_id).await;
@@ -569,6 +579,7 @@ impl UnifiedExecProcessManager {
                     text.clone(),
                     message.clone(),
                     wall_time,
+                    request.monitor,
                 )
                 .await;
                 self.release_process_id(request.process_id).await;
@@ -587,6 +598,7 @@ impl UnifiedExecProcessManager {
                 text.clone(),
                 exit,
                 wall_time,
+                request.monitor,
             )
             .await;
 
@@ -603,11 +615,21 @@ impl UnifiedExecProcessManager {
             raw_output: collected,
             truncation_policy: context.turn.truncation_policy,
             max_output_tokens: request.max_output_tokens,
+            monitor: request.monitor,
             process_id: response_process_id,
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(request.hook_command.clone()),
         };
+
+        if request.monitor && response.process_id.is_some() {
+            self.start_monitoring_process(
+                process_id,
+                context.session.clone(),
+                request.hook_command,
+            )
+            .await?;
+        }
 
         Ok(response)
     }
@@ -758,6 +780,7 @@ impl UnifiedExecProcessManager {
             raw_output: collected,
             truncation_policy: request.truncation_policy,
             max_output_tokens: request.max_output_tokens,
+            monitor: false,
             process_id,
             exit_code,
             original_token_count: Some(original_token_count),
@@ -765,6 +788,73 @@ impl UnifiedExecProcessManager {
         };
 
         Ok(response)
+    }
+
+    pub(crate) async fn start_monitoring_process(
+        &self,
+        process_id: i32,
+        session: Arc<crate::session::session::Session>,
+        command: String,
+    ) -> Result<(), UnifiedExecError> {
+        let (mut receiver, exit_token, process) = {
+            let store = self.process_store.lock().await;
+            let entry = store
+                .processes
+                .get(&process_id)
+                .ok_or(UnifiedExecError::UnknownProcessId { process_id })?;
+            (
+                entry.process.output_receiver(),
+                entry.process.cancellation_token(),
+                Arc::clone(&entry.process),
+            )
+        };
+
+        tokio::spawn(async move {
+            use tokio::sync::broadcast::error::RecvError;
+
+            let mut lagged = false;
+            loop {
+                tokio::select! {
+                    _ = exit_token.cancelled() => {
+                        tokio::time::sleep(crate::unified_exec::async_watcher::TRAILING_OUTPUT_GRACE).await;
+                        let exit_code = process.exit_code().unwrap_or(-1);
+                        inject_monitor_update(
+                            &session,
+                            monitor_exit_text(&command, process_id, exit_code),
+                        ).await;
+                        break;
+                    }
+                    received = receiver.recv() => {
+                        match received {
+                            Ok(chunk) => {
+                                let text = String::from_utf8_lossy(&chunk).to_string();
+                                inject_monitor_update(
+                                    &session,
+                                    monitor_output_text(&command, process_id, &text),
+                                ).await;
+                            }
+                            Err(RecvError::Lagged(_)) => {
+                                lagged = true;
+                            }
+                            Err(RecvError::Closed) => {
+                                let exit_code = process.exit_code().unwrap_or(-1);
+                                let text = if lagged {
+                                    format!(
+                                        "<monitor id=\"{process_id}\">\nCommand: {command}\nSome output was dropped because the monitor could not keep up.\nExit code: {exit_code}\n</monitor>"
+                                    )
+                                } else {
+                                    monitor_exit_text(&command, process_id, exit_code)
+                                };
+                                inject_monitor_update(&session, text).await;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
     }
 
     async fn refresh_process_state(&self, process_id: i32) -> ProcessStatus {
@@ -844,6 +934,7 @@ impl UnifiedExecProcessManager {
         started_at: Instant,
         process_id: i32,
         tty: bool,
+        monitor: bool,
         network_approval: Option<DeferredNetworkApproval>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
         initial_exec_command_active: Arc<AtomicBool>,
@@ -883,6 +974,7 @@ impl UnifiedExecProcessManager {
             process_id,
             transcript,
             started_at,
+            monitor,
         );
     }
 
@@ -1366,6 +1458,40 @@ enum ProcessStatus {
         entry: Box<ProcessEntry>,
     },
     Unknown,
+}
+
+async fn inject_monitor_update(session: &Arc<crate::session::session::Session>, text: String) {
+    let item = monitor_response_item(text);
+    if session.inject_if_running(vec![item.clone()]).await.is_ok() {
+        return;
+    }
+    let _ = session.try_start_turn_if_idle(vec![item]).await;
+}
+
+fn monitor_response_item(text: String) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText { text }],
+        phase: None,
+    }
+}
+
+fn monitor_output_text(command: &str, process_id: i32, output: &str) -> String {
+    let output = truncate_monitor_text(output);
+    format!("<monitor id=\"{process_id}\">\nCommand: {command}\nOutput:\n{output}\n</monitor>")
+}
+
+fn monitor_exit_text(command: &str, process_id: i32, exit_code: i32) -> String {
+    format!("<monitor id=\"{process_id}\">\nCommand: {command}\nExit code: {exit_code}\n</monitor>")
+}
+
+fn truncate_monitor_text(text: &str) -> String {
+    if text.len() <= MONITOR_OUTPUT_MAX_BYTES {
+        return text.to_string();
+    }
+    let truncated = take_bytes_at_char_boundary(text, MONITOR_OUTPUT_MAX_BYTES);
+    format!("{truncated}\n[monitor output truncated]")
 }
 
 #[cfg(test)]

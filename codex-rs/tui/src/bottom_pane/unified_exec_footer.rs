@@ -15,7 +15,13 @@ use crate::render::renderable::Renderable;
 
 /// Tracks active unified-exec processes and renders a compact summary.
 pub(crate) struct UnifiedExecFooter {
-    processes: Vec<String>,
+    processes: Vec<UnifiedExecFooterProcess>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnifiedExecFooterProcess {
+    pub(crate) command: String,
+    pub(crate) monitored: bool,
 }
 
 impl UnifiedExecFooter {
@@ -25,7 +31,7 @@ impl UnifiedExecFooter {
         }
     }
 
-    pub(crate) fn set_processes(&mut self, processes: Vec<String>) -> bool {
+    pub(crate) fn set_processes(&mut self, processes: Vec<UnifiedExecFooterProcess>) -> bool {
         if self.processes == processes {
             return false;
         }
@@ -49,8 +55,13 @@ impl UnifiedExecFooter {
 
         let count = self.processes.len();
         let plural = if count == 1 { "" } else { "s" };
+        let monitor = if self.processes.iter().any(|process| process.monitored) {
+            " · monitor"
+        } else {
+            ""
+        };
         Some(format!(
-            "{count} background terminal{plural} running · /ps to view · /stop to close"
+            "{count} background terminal{plural} running{monitor} · /ps to view · /stop to close"
         ))
     }
 
@@ -96,7 +107,10 @@ mod tests {
     #[test]
     fn render_more_sessions() {
         let mut footer = UnifiedExecFooter::new();
-        footer.set_processes(vec!["rg \"foo\" src".to_string()]);
+        footer.set_processes(vec![UnifiedExecFooterProcess {
+            command: "rg \"foo\" src".to_string(),
+            monitored: true,
+        }]);
         let width = 50;
         let height = footer.desired_height(width);
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
@@ -107,7 +121,14 @@ mod tests {
     #[test]
     fn render_many_sessions() {
         let mut footer = UnifiedExecFooter::new();
-        footer.set_processes((0..123).map(|idx| format!("cmd {idx}")).collect());
+        footer.set_processes(
+            (0..123)
+                .map(|idx| UnifiedExecFooterProcess {
+                    command: format!("cmd {idx}"),
+                    monitored: idx == 0,
+                })
+                .collect(),
+        );
         let width = 50;
         let height = footer.desired_height(width);
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
